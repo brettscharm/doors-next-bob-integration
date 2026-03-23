@@ -1,12 +1,4 @@
-# DOORS Next MCP Server Requirements
-# Install with: pip install -r requirements.txt
-
-# Core dependencies for DOORS API
+# DOORS Next MCP Server Dependencies
 requests>=2.31.0
 python-dotenv>=1.0.0
-
-# MCP Server framework
 mcp>=1.0.0
-
-# XML parsing for DOORS responses
-lxml>=4.9.0
