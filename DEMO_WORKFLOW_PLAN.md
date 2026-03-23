@@ -261,11 +261,11 @@ output/DNG_Requirements/
 {
   "export_info": {
     "timestamp": "2026-03-23T17:45:00Z",
-    "doors_url": "https://goblue.clm.ibmcloud.com/rm"
+    "doors_url": "https://your-doors-server.com/rm"
   },
   "project": {
-    "title": "Bob Project",
-    "id": "_gtcOgCR9EfG2I_bh4PQ0Og"
+    "title": "Your Project Name",
+    "id": "_projectId123"
   },
   "modules": [
     {
@@ -294,9 +294,9 @@ output/DNG_Requirements/
     "description": "The system shall provide secure user authentication...",
     "status": "Approved",
     "type": "Functional",
-    "url": "https://goblue.clm.ibmcloud.com/rm/resources/_abc123",
+    "url": "https://your-doors-server.com/rm/resources/_abc123",
     "module": "System Requirements",
-    "project": "Bob Project"
+    "project": "Your Project Name"
   }
 ]
 ```
@@ -314,8 +314,8 @@ REQ-001,User Authentication,"The system shall...",Approved,Functional,System Req
 **Export Date:** March 23, 2026 at 5:45 PM EDT
 
 ## Source Information
-- **DOORS Server:** https://goblue.clm.ibmcloud.com/rm
-- **Project:** Bob Project
+- **DOORS Server:** https://your-doors-server.com/rm
+- **Project:** Your Project Name
 - **Modules Exported:** 3
 
 ## Export Summary
@@ -583,8 +583,8 @@ gatherUsageStats = false
 ╔════════════════════════════════════════════════════════════╗
 ║  Step 1 of 5: Connect to DOORS Next                       ║
 ║                                                            ║
-║  DOORS Next URL:                                           ║
-║  [https://goblue.clm.ibmcloud.com/rm              ]       ║
+║  DOORS Next URL (must end with /rm):                       ║
+║  [https://your-doors-server.com/rm                ]       ║
 ║                                                            ║
 ║  Username: [your_username                         ]       ║
 ║  Password: [••••••••••••                          ]       ║

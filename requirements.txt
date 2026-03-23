@@ -6,7 +6,7 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 
 # MCP Server framework
-mcp>=0.9.0
+mcp>=1.0.0
 
 # XML parsing for DOORS responses
 lxml>=4.9.0

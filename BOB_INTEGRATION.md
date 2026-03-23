@@ -78,99 +78,40 @@ An AI agent is a system that can:
 
 ## 🚀 Quick Start with Bob
 
-### Step 1: Clone the Repository
+### The Simple Way (Recommended)
 
-**Ask Bob to clone the repo:**
+**Step 1: Clone and Setup**
 
 ```
-Bob, clone this GitHub repository: [YOUR_REPO_URL]
+You: Bob, clone this DOORS Next integration repo and set it up: [YOUR_REPO_URL]
 ```
 
-**Bob will:**
-```bash
-git clone [YOUR_REPO_URL]
-cd doors-next-bob-integration
-```
+Bob will clone the repo and install dependencies.
 
 ---
 
-### Step 2: Setup the Package
-
-**Ask Bob to set it up:**
+**Step 2: Connect to DOORS Next**
 
 ```
-Bob, install the dependencies for this DOORS Next integration package
+You: Bob, connect to DOORS Next and list all projects
 ```
 
-**Bob will:**
-```bash
-pip install -r requirements.txt
-```
+Bob will:
+1. Ask for your DOORS credentials (URL, username, password)
+2. Configure the MCP server
+3. Ask you to restart VS Code
 
 ---
 
-### Step 3: Configure Credentials
+**Step 3: Use It!**
 
-**Ask Bob to help configure:**
-
-```
-Bob, copy .env.example to .env and help me configure my DOORS credentials
-```
-
-**Bob will:**
-1. Copy the file: `cp .env.example .env`
-2. Ask you for your credentials
-3. Update the .env file with your info
-
-**Or you can do it manually:**
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
----
-
-### Step 4: Test the Connection
-
-**Ask Bob to test:**
+After restarting VS Code:
 
 ```
-Bob, test the connection to DOORS Next
+You: Bob, use the doors-next MCP server to list all projects
 ```
 
-**Bob will run:**
-```bash
-python3 -c "from doors_client import DOORSNextClient; c = DOORSNextClient.from_env(); print('✅ Connected!' if c.authenticate() else '❌ Failed')"
-```
-
----
-
-### Step 5: Configure the MCP Server
-
-**Ask Bob to configure the MCP server:**
-
-```
-Bob, configure the doors-next MCP server in your settings
-```
-
-**Bob will:**
-1. Get the full path to doors_mcp_server.py
-2. Add the configuration to MCP settings
-3. Tell you to restart VS Code
-
-**Or follow the manual steps in README.md**
-
----
-
-### Step 6: Start Using It!
-
-**After restarting VS Code, ask Bob:**
-
-```
-Bob, use the doors-next MCP server to list all projects
-```
-
-**And you're off! 🎉**
+**That's it! 🎉**
 
 ---
 
@@ -227,7 +168,7 @@ Would you like to provide them now?
 
 **You:**
 ```
-DOORS_URL=https://goblue.clm.ibmcloud.com/rm
+DOORS_URL=https://your-doors-server.com/rm
 DOORS_USERNAME=myusername
 DOORS_PASSWORD=mypassword
 ```

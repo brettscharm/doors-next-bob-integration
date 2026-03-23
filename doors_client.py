@@ -19,7 +19,7 @@ class DOORSNextClient:
         Initialize DOORS Next client
         
         Args:
-            base_url: DOORS Next server URL (e.g., https://goblue.clm.ibmcloud.com/rm)
+            base_url: DOORS Next server URL (e.g., https://your-doors-server.com/rm)
             username: Your DOORS Next username
             password: Your DOORS Next password
             project: Project area name
@@ -1127,7 +1127,7 @@ if __name__ == "__main__":
     except ValueError as e:
         print(f"❌ Configuration error: {e}")
         print("\nPlease create a .env file with:")
-        print("DOORS_URL=https://goblue.clm.ibmcloud.com/rm")
+        print("DOORS_URL=https://your-doors-server.com/rm")
         print("DOORS_USERNAME=your_username")
         print("DOORS_PASSWORD=your_password")
         print("DOORS_PROJECT=YourProject")

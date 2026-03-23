@@ -35,83 +35,45 @@ This AI agent enables Bob to:
 - Valid DOORS Next credentials
 - Bob (Claude Dev) installed in VS Code
 
-### Installation
+### Installation Steps
 
 ```bash
 # 1. Clone this repository
-git clone https://github.com/brettscharm/doors-next-bob-integration
+git clone <your-repo-url>
 cd doors-next-bob-integration
 
 # 2. Install dependencies
 pip install -r requirements.txt
-
-# 3. Configure credentials
-cp .env.example .env
-# Edit .env with your DOORS credentials
-
-# 4. Test connection
-python3 -c "from doors_client import DOORSNextClient; c = DOORSNextClient.from_env(); print('✅ Connected!' if c.authenticate() else '❌ Failed')"
 ```
 
----
+That's it! Now just ask Bob to connect to DOORS Next.
 
-## 🤖 Using with Bob
+### Using with Bob
 
-### Configure Bob's MCP Server
-
-1. Open VS Code Command Palette (`Cmd+Shift+P` or `Ctrl+Shift+P`)
-2. Type "Bob: Open MCP Settings"
-3. Add this configuration:
-
-```json
-{
-  "mcpServers": {
-    "doors-next": {
-      "command": "python3",
-      "args": [
-        "/ABSOLUTE/PATH/TO/doors_mcp_server.py"
-      ],
-      "env": {
-        "DOORS_URL": "https://your-doors-server.com/rm",
-        "DOORS_USERNAME": "your_username",
-        "DOORS_PASSWORD": "your_password"
-      }
-    }
-  }
-}
-```
-
-**⚠️ Important:** Replace `/ABSOLUTE/PATH/TO/` with the full path to this directory!
-
-### Example Bob Conversation
+Simply ask Bob:
 
 ```
-You: Bob, use the doors-next MCP server to list all projects
-
-Bob: [Shows numbered list of all DOORS Next projects]
-
-You: Get modules from project 5
-
-Bob: [Shows all modules in project 5]
-
-You: Pull requirements from the first module and create an API spec
-
-Bob: [Retrieves requirements and generates OpenAPI specification]
+You: Bob, connect to DOORS Next and list all projects
 ```
+
+Bob will:
+1. Ask you for your DOORS Next credentials (URL, username, password)
+2. Configure the MCP server automatically
+3. Connect and show you all available projects
+
+**Note:** Bob will configure the MCP server with your credentials. You'll need to restart VS Code after the first setup, then Bob can access DOORS Next anytime.
 
 ---
 
 ## 📚 Documentation
 
-- **BOB_INTEGRATION.md** - Detailed Bob integration guide with example prompts
-- **DEMO_WORKFLOW_PLAN.md** - Complete workflow documentation
-- **FINDING_MODULES_GUIDE.md** - Guide for discovering modules in DOORS
+- **[BOB_INTEGRATION.md](BOB_INTEGRATION.md)** - **START HERE!** Complete guide with example conversations, prompts, and workflows for using Bob with DOORS Next
+- **[DEMO_WORKFLOW_PLAN.md](DEMO_WORKFLOW_PLAN.md)** - Complete workflow documentation
+- **[FINDING_MODULES_GUIDE.md](FINDING_MODULES_GUIDE.md)** - Guide for discovering modules in DOORS
 
 ---
 
-## 🔒 Security
-
-**Important Security Notes:**
+## 🔒 Security Best Practices
 
 1. ⚠️ **Never commit `.env`** - It contains your password
 2. ✅ The `.env` file is already in `.gitignore`
@@ -125,17 +87,52 @@ Bob: [Retrieves requirements and generates OpenAPI specification]
 
 ```
 doors-next-bob-integration/
-├── README.md                    # This file
-├── BOB_INTEGRATION.md           # Bob integration guide
+├── README.md                    # This file - Quick start guide
+├── BOB_INTEGRATION.md           # Detailed Bob usage guide with examples
 ├── DEMO_WORKFLOW_PLAN.md        # Workflow documentation
 ├── FINDING_MODULES_GUIDE.md     # Module discovery guide
 ├── requirements.txt             # Python dependencies
-├── .env.example                 # Credential template
+├── .env.example                 # Credential template (copy to .env)
 ├── .env                         # Your credentials (DO NOT COMMIT)
 ├── .gitignore                   # Git ignore rules
 ├── doors_client.py              # DOORS API client library
 └── doors_mcp_server.py          # MCP server for Bob
 ```
+
+---
+
+## 🆘 Troubleshooting
+
+### Connection Issues
+
+**Problem:** Authentication fails
+
+**Solution:** 
+1. Verify your credentials in `.env`
+2. Check that your `DOORS_URL` ends with `/rm`
+3. Test connection: `python3 -c "from doors_client import DOORSNextClient; c = DOORSNextClient.from_env(); print(c.authenticate())"`
+
+### Installation Issues
+
+**Problem:** `pip install -r requirements.txt` fails
+
+**Solution:**
+```bash
+# Upgrade pip first
+pip install --upgrade pip
+
+# Then try again
+pip install -r requirements.txt
+```
+
+### MCP Server Issues
+
+**Problem:** Bob can't see the doors-next MCP server
+
+**Solution:**
+1. Verify the absolute path in your MCP settings (use `pwd` to get current directory)
+2. Restart VS Code after configuration changes
+3. Check Bob's available servers: "Bob: Show MCP Servers"
 
 ---
 

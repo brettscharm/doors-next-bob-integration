@@ -38,12 +38,12 @@ The project URL from `list_projects()` is a service provider URL that needs conv
 
 **From:**
 ```
-https://goblue.clm.ibmcloud.com/rm/oslc_rm/_gtcOgCR9EfG2I_bh4PQ0Og/services.xml
+https://your-doors-server.com/rm/oslc_rm/_gtcOgCR9EfG2I_bh4PQ0Og/services.xml
 ```
 
 **To:**
 ```
-https://goblue.clm.ibmcloud.com/rm/process/project-areas/_gtcOgCR9EfG2I_bh4PQ0Og
+https://your-doors-server.com/rm/process/project-areas/_gtcOgCR9EfG2I_bh4PQ0Og
 ```
 
 **Conversion logic:**
@@ -154,7 +154,7 @@ For "Project Bob - Brett (Requirements)" project:
     {
         'title': 'root',
         'id': 'FR_gy59UCR9EfG2I_bh4PQ0Og',
-        'url': 'https://goblue.clm.ibmcloud.com/rm/folders/FR_gy59UCR9EfG2I_bh4PQ0Og',
+        'url': 'https://your-doors-server.com/rm/folders/FR_gy59UCR9EfG2I_bh4PQ0Og',
         'level': 0
     }
     # ... any child folders would appear here with level > 0
