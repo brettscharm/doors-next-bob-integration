@@ -6,79 +6,42 @@ An MCP server that lets Bob (or any AI coding assistant) pull requirements from 
 
 ---
 
-## What It Does
-
-Bob can connect to your DOORS Next server and:
-- List all projects
-- Browse modules within a project
-- Pull requirements from any module
-- Save requirements to JSON, CSV, or Markdown
-
-All through natural conversation — no manual API calls needed.
-
----
-
-## Setup (One Time)
-
-### 1. Clone and Install
+## Setup
 
 ```bash
 git clone https://github.com/brettscharm/doors-next-bob-integration.git
-cd doors-next-bob-integration
-pip install -r requirements.txt
 ```
 
-### 2. Add MCP Server to Bob
+Open the project in VS Code with Bob, then say:
 
-Add this to your Bob/Claude Dev MCP settings (replace the path with your actual path):
-
-```json
-{
-  "mcpServers": {
-    "doors-next": {
-      "command": "python3",
-      "args": ["doors_mcp_server.py"],
-      "cwd": "/absolute/path/to/doors-next-bob-integration"
-    }
-  }
-}
+```
+Bob, connect to DNG
 ```
 
-To get the absolute path, run `pwd` in the project directory.
+Bob handles everything from there — installs dependencies, configures the MCP server, asks for your credentials, and connects.
 
-### 3. Restart VS Code
-
-The MCP server activates after restart.
+You'll need to **restart VS Code once** after the first setup so the MCP server activates. After that, just say "connect to DNG" and you're in.
 
 ---
 
-## Usage
+## What Happens
 
-Just tell Bob:
-
-```
-Connect to DNG
-```
-
-Bob will ask for your credentials (server URL, username, password), connect, and walk you through:
-
-1. **Projects** — "There are 107 projects. Want me to list them?"
-2. **Modules** — "What are the modules in [project name]?"
-3. **Requirements** — "Get requirements from [module name]"
-4. **Save** — "Want me to save these requirements?"
+1. **Connect** — Bob asks for your DNG server URL, username, and password
+2. **Projects** — "There are 107 projects. Want me to list them?"
+3. **Modules** — "What are the modules in [project name]?"
+4. **Requirements** — "Get requirements from [module name]"
+5. **Save** — "Want me to save these?" (JSON, CSV, or Markdown)
 
 ---
 
 ## Optional: .env File
 
-If you'd rather not enter credentials every session, create a `.env` file:
+To skip entering credentials every session, create a `.env` file:
 
 ```bash
 cp .env.example .env
 # Edit .env with your actual credentials
 ```
-
-With a `.env` file, Bob connects automatically without asking for credentials.
 
 ---
 
@@ -86,30 +49,23 @@ With a `.env` file, Bob connects automatically without asking for credentials.
 
 ```
 doors-next-bob-integration/
-├── CLAUDE.md              # Instructions for Bob (read automatically)
+├── CLAUDE.md              # Instructions Bob reads automatically
 ├── README.md              # This file
-├── doors_client.py        # DNG API client (OSLC + Reportable REST)
-├── doors_mcp_server.py    # MCP server (5 tools for Bob)
+├── doors_client.py        # DNG API client
+├── doors_mcp_server.py    # MCP server (5 tools)
 ├── requirements.txt       # Python dependencies
-├── .env.example           # Credential template
-└── .env                   # Your credentials (DO NOT COMMIT)
+└── .env.example           # Credential template
 ```
 
 ---
 
 ## Troubleshooting
 
-**Bob can't see the MCP server?**
-- Check the absolute path in your MCP settings is correct
-- Restart VS Code after adding the config
-
-**Authentication fails?**
-- URL must end with `/rm` (e.g., `https://your-server.com/rm`)
-- Check username/password are correct
-
-**No modules or requirements found?**
-- Verify you have permission to access the project in DOORS Next
-- Some projects may use a different module structure
+| Problem | Fix |
+|---------|-----|
+| Bob can't see the MCP server | Restart VS Code after first setup |
+| Authentication fails | URL must end with `/rm` (e.g., `https://server.com/rm`) |
+| No modules found | Check your DNG permissions for that project |
 
 ---
 
