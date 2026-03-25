@@ -4,7 +4,7 @@ IBM ELM MCP Server for IBM Bob
 Provides tools for Bob to interact with IBM Engineering Lifecycle Management (ELM)
 Covers DNG (requirements), EWM (work items), and ETM (test management)
 
-Tools (14):
+Tools (15):
   1.  connect_to_elm          - Connect with credentials
   2.  list_projects           - List DNG/EWM/ETM projects (domain parameter)
   3.  get_modules             - Get modules from a DNG project
@@ -16,9 +16,10 @@ Tools (14):
   9.  update_requirement      - Update an existing requirement's title and/or content
   10. create_baseline         - Create a baseline snapshot of a DNG project
   11. list_baselines          - List existing baselines for a DNG project
-  12. create_task             - Create an EWM Task with optional DNG requirement link
-  13. create_test_case        - Create an ETM Test Case with optional DNG requirement link
-  14. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
+  12. extract_pdf             - Extract text from a PDF file for import into DNG
+  13. create_task             - Create an EWM Task with optional DNG requirement link
+  14. create_test_case        - Create an ETM Test Case with optional DNG requirement link
+  15. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
 """
 
 import os
@@ -361,6 +362,25 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="extract_pdf",
+            description=(
+                "Extract text from a PDF file. "
+                "Use this INSTEAD of trying to read PDFs yourself. "
+                "Returns clean structured text with page numbers. "
+                "Use this as the first step when importing a PDF into DNG."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute path to the PDF file on disk"
+                    }
+                },
+                "required": ["file_path"]
+            }
+        ),
+        Tool(
             name="create_task",
             description=(
                 "Create an EWM Task work item. "
@@ -506,6 +526,47 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 f"- **Full Lifecycle** — Requirements → Tasks → Test Cases, all cross-linked.\n\n"
                 f"Which project would you like to work with?"
             ))]
+
+        # ── extract_pdf (no connection needed) ────────────────
+        if name == "extract_pdf":
+            file_path = arguments.get("file_path", "").strip()
+            if not file_path:
+                return [TextContent(type="text", text="Error: file_path is required.")]
+
+            import os
+            if not os.path.exists(file_path):
+                return [TextContent(type="text", text=f"Error: File not found: {file_path}")]
+
+            try:
+                import fitz  # PyMuPDF
+            except ImportError:
+                return [TextContent(type="text", text=(
+                    "Error: PyMuPDF is not installed. Run: pip install PyMuPDF"
+                ))]
+
+            try:
+                doc = fitz.open(file_path)
+                pages = []
+                for i, page in enumerate(doc, 1):
+                    text = page.get_text().strip()
+                    if text:
+                        pages.append(f"--- Page {i} ---\n{text}")
+                doc.close()
+
+                if not pages:
+                    return [TextContent(type="text", text=(
+                        f"No text found in '{os.path.basename(file_path)}'. "
+                        "The PDF may be image-only (scanned without OCR)."
+                    ))]
+
+                full_text = "\n\n".join(pages)
+                return [TextContent(type="text", text=(
+                    f"# PDF Extracted: {os.path.basename(file_path)}\n"
+                    f"**Pages:** {len(pages)}\n\n"
+                    f"{full_text}"
+                ))]
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error reading PDF: {e}")]
 
         # ── All other tools require a connection ──────────────
         client = _get_or_create_client()

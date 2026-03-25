@@ -125,8 +125,8 @@ When the user provides a PDF to import into DNG (or re-import an updated version
 
 **First Import (PDF → DNG):**
 
-1. Use your native file-reading capabilities to read the PDF the user provides. Parse the content into structured requirements using AI reasoning.
-2. Identify logical sections, headings, and individual requirements
+1. Call `extract_pdf` with the `file_path` the user provides — this returns clean structured text from the PDF. Do NOT try to read the PDF yourself; always use this tool.
+2. Parse the extracted text into structured requirements — identify logical sections, headings, and individual requirements
 3. Call `get_artifact_types` with `project_identifier` to get valid type names
 4. **Present in a preview table** — show each parsed requirement with title, type, and content
 5. **Get explicit approval** before creating anything
@@ -150,7 +150,7 @@ This freezes the current state so you can compare against it later.
 
 **Then proceed with the diff:**
 
-1. Use your native file-reading capabilities to read the new PDF version
+1. Call `extract_pdf` with the new PDF's `file_path` — do NOT try to read the PDF yourself
 2. Read the existing requirements from the DNG module using `get_module_requirements` with `project_identifier` and `module_identifier` — **note each requirement's URL from the output**
 3. **AI diff** — match requirements between the PDF and DNG by:
    - **Section title / heading** (primary match key — e.g., "Weight Constraints" matches "Weight Constraints")
@@ -325,6 +325,7 @@ Only proceed after the user explicitly confirms. If ALL requirements ARE Approve
 | `update_requirement` | Update an existing requirement's title/content | requirement_url, title (optional), content (optional) |
 | `create_baseline` | Create a baseline snapshot of a project | project_identifier, title, description (optional) |
 | `list_baselines` | List existing baselines for a project | project_identifier |
+| `extract_pdf` | Extract text from a PDF file (use before PDF import) | file_path |
 
 ### EWM (Work Items)
 
