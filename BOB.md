@@ -126,6 +126,14 @@ When the user provides a PDF to import into DNG (or re-import an updated version
 5. Call `create_requirements` to push them to DNG in a descriptive folder
 6. **Save the mapping** of requirement titles to their DNG URLs (shown in create output) — you'll need these for re-import
 
+**After First Import — Create Baseline:**
+
+After the initial import is complete and reviewed, offer to create a baseline:
+> "Would you like me to create a baseline of the current state before any future changes?"
+
+If yes → call `create_baseline` with a descriptive name (e.g., "Apollo Spec V1 Import").
+This freezes the current state so you can compare against it later.
+
 **Re-Import (Updated PDF → update only changes):**
 
 1. Read the new PDF version locally
@@ -282,6 +290,8 @@ Only proceed after the user explicitly confirms. If ALL requirements ARE Approve
 | `get_link_types` | List link types for a DNG project | project_identifier |
 | `create_requirements` | Create requirements in DNG | project_identifier, folder_name, requirements[] |
 | `update_requirement` | Update an existing requirement | requirement_url, title (optional), content (optional) |
+| `create_baseline` | Create a baseline snapshot | project_identifier, title, description (optional) |
+| `list_baselines` | List existing baselines | project_identifier |
 
 ### EWM (Work Items)
 

@@ -4,7 +4,7 @@ IBM ELM MCP Server for IBM Bob
 Provides tools for Bob to interact with IBM Engineering Lifecycle Management (ELM)
 Covers DNG (requirements), EWM (work items), and ETM (test management)
 
-Tools (12):
+Tools (14):
   1.  connect_to_dng          - Connect with credentials
   2.  list_projects           - List DNG/EWM/ETM projects (domain parameter)
   3.  get_modules             - Get modules from a DNG project
@@ -14,9 +14,11 @@ Tools (12):
   7.  get_link_types          - Discover link types for a DNG project
   8.  create_requirements     - Create requirements with links in a descriptive folder
   9.  update_requirement      - Update an existing requirement's title and/or content
-  10. create_task             - Create an EWM Task with optional DNG requirement link
-  11. create_test_case        - Create an ETM Test Case with optional DNG requirement link
-  12. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
+  10. create_baseline         - Create a baseline snapshot of a DNG project
+  11. list_baselines          - List existing baselines for a DNG project
+  12. create_task             - Create an EWM Task with optional DNG requirement link
+  13. create_test_case        - Create an ETM Test Case with optional DNG requirement link
+  14. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
 """
 
 import os
@@ -307,6 +309,50 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["requirement_url"]
+            }
+        ),
+        Tool(
+            name="create_baseline",
+            description=(
+                "Create a baseline (immutable snapshot) of the current state of a DNG project. "
+                "Use this after importing requirements to freeze the state before making changes. "
+                "Baseline creation is async — the server processes it in the background."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_identifier": {
+                        "type": "string",
+                        "description": "DNG project number or name"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Baseline name (e.g., 'V1 Import Baseline'). Will be prefixed with [AI Generated]."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional baseline description"
+                    }
+                },
+                "required": ["project_identifier", "title"]
+            }
+        ),
+        Tool(
+            name="list_baselines",
+            description=(
+                "List all baselines for a DNG project. "
+                "Returns baseline names, URLs, and creation dates. "
+                "Use this to see available baselines for comparison."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_identifier": {
+                        "type": "string",
+                        "description": "DNG project number or name"
+                    }
+                },
+                "required": ["project_identifier"]
             }
         ),
         Tool(
@@ -896,6 +942,78 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     f"{error_detail}\n\n"
                     "This may be a permissions issue or a version conflict (another user edited it)."
                 ))]
+
+        # ── create_baseline (DNG CM) ──────────────────────────
+        elif name == "create_baseline":
+            proj_id = arguments.get("project_identifier", "")
+            bl_title = arguments.get("title", "")
+            bl_desc = arguments.get("description", "")
+
+            if not proj_id or not bl_title:
+                return [TextContent(type="text", text="Error: project_identifier and title are required.")]
+
+            if not _projects_cache:
+                _projects_cache = client.list_projects()
+
+            project = _find_by_identifier(_projects_cache, proj_id)
+            if not project:
+                return [TextContent(type="text", text=f"Project not found: '{proj_id}'")]
+
+            result = client.create_baseline(
+                project_url=project['url'],
+                title=bl_title,
+                description=bl_desc,
+            )
+
+            if result and 'error' not in result:
+                return [TextContent(type="text", text=(
+                    f"# Baseline Created\n\n"
+                    f"- **Title:** {result['title']}\n"
+                    f"- **Project:** {project['title']}\n"
+                    f"- **Stream:** {result.get('stream_title', 'N/A')}\n"
+                    f"- **Status:** Processing (baseline creation is async)\n\n"
+                    f"The baseline is being created in the background. "
+                    f"Use `list_baselines` to confirm it appears."
+                ))]
+            else:
+                error_detail = result.get('error', '') if result else ''
+                return [TextContent(type="text", text=(
+                    f"Failed to create baseline for '{project['title']}'.\n"
+                    f"{error_detail}"
+                ))]
+
+        # ── list_baselines (DNG CM) ──────────────────────────
+        elif name == "list_baselines":
+            proj_id = arguments.get("project_identifier", "")
+            if not proj_id:
+                return [TextContent(type="text", text="Error: project_identifier is required.")]
+
+            if not _projects_cache:
+                _projects_cache = client.list_projects()
+
+            project = _find_by_identifier(_projects_cache, proj_id)
+            if not project:
+                return [TextContent(type="text", text=f"Project not found: '{proj_id}'")]
+
+            baselines = client.list_baselines(project['url'])
+            if not baselines:
+                return [TextContent(type="text", text=(
+                    f"No baselines found for '{project['title']}'.\n"
+                    "Use `create_baseline` to create one."
+                ))]
+
+            lines = [
+                f"# Baselines in '{project['title']}'\n",
+                f"Found **{len(baselines)}** baseline(s):\n",
+            ]
+            for i, bl in enumerate(baselines, 1):
+                lines.append(f"{i}. **{bl['title']}**")
+                if bl.get('url'):
+                    lines.append(f"   - URL: `{bl['url']}`")
+                if bl.get('created'):
+                    lines.append(f"   - Created: {bl['created']}")
+
+            return [TextContent(type="text", text="\n".join(lines))]
 
         # ── create_task (EWM) ─────────────────────────────────
         elif name == "create_task":

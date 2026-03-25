@@ -1117,6 +1117,207 @@ class DOORSNextClient:
             pass
         return ''
 
+    # ── Configuration Management (Baselines) ────────────────
+
+    def _get_component_and_stream(self, project_url: str) -> Optional[Dict]:
+        """Discover the component URL and default stream URL for a DNG project.
+
+        Returns dict with 'component_url', 'stream_url', 'stream_title' or None.
+        """
+        self._ensure_auth()
+        try:
+            # Step 1: GET the service provider to find the component
+            resp = self.session.get(
+                project_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return None
+
+            root = ET.fromstring(resp.content)
+            ns_config = 'http://open-services.net/ns/config#'
+            ns_rdf = self._NS_OSLC['rdf']
+
+            component_url = None
+            for elem in root.findall(f'.//{{{ns_config}}}component'):
+                component_url = elem.get(f'{{{ns_rdf}}}resource', '')
+                if component_url:
+                    break
+
+            if not component_url:
+                return None
+
+            # Step 2: GET the component's configurations to find the stream
+            configs_url = f"{component_url}/configurations"
+            resp2 = self.session.get(
+                configs_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if resp2.status_code != 200:
+                return None
+
+            root2 = ET.fromstring(resp2.content)
+            stream_url = None
+            for elem in root2.iter():
+                tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                if tag_local == 'member':
+                    url = elem.get(f'{{{ns_rdf}}}resource', '')
+                    if '/cm/stream/' in url:
+                        stream_url = url
+                        break
+
+            if not stream_url:
+                return None
+
+            # Step 3: GET the stream to get its title
+            resp3 = self.session.get(
+                stream_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            stream_title = ''
+            if resp3.status_code == 200:
+                root3 = ET.fromstring(resp3.content)
+                for elem in root3.iter():
+                    local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                    if local == 'title' and elem.text:
+                        stream_title = elem.text.strip()
+                        break
+
+            return {
+                'component_url': component_url,
+                'stream_url': stream_url,
+                'stream_title': stream_title,
+            }
+        except Exception:
+            return None
+
+    def create_baseline(self, project_url: str, title: str,
+                         description: str = '') -> Optional[Dict]:
+        """Create a baseline from the project's current stream.
+
+        Args:
+            project_url: The project's service provider URL
+            title: Baseline name (will be prefixed with [AI Generated])
+            description: Optional baseline description
+
+        Returns:
+            Dict with 'title', 'url', 'task_url' on success, or {'error': '...'} on failure.
+            Note: Baseline creation is async (202). The 'task_url' can be polled.
+        """
+        self._ensure_auth()
+
+        config = self._get_component_and_stream(project_url)
+        if not config:
+            return {'error': 'Could not discover component/stream for this project. '
+                    'Configuration management may not be enabled.'}
+
+        prefixed_title = f"[AI Generated] {title}" if not title.startswith("[AI Generated]") else title
+
+        desc_element = ''
+        if description:
+            desc_element = f'\n    <dcterms:description>{self._escape_xml(description)}</dcterms:description>'
+
+        rdf = f'''<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dcterms="http://purl.org/dc/terms/"
+         xmlns:oslc_config="http://open-services.net/ns/config#">
+  <oslc_config:Baseline rdf:about="">
+    <dcterms:title>{self._escape_xml(prefixed_title)}</dcterms:title>{desc_element}
+    <oslc_config:component rdf:resource="{config['component_url']}"/>
+    <oslc_config:overrides rdf:resource="{config['stream_url']}"/>
+  </oslc_config:Baseline>
+</rdf:RDF>'''
+
+        baselines_url = f"{config['stream_url']}/baselines"
+
+        try:
+            resp = self.session.post(
+                baselines_url,
+                data=rdf.encode('utf-8'),
+                headers={
+                    'Content-Type': 'application/rdf+xml',
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if resp.status_code in [200, 201, 202]:
+                task_url = resp.headers.get('Location', '')
+                return {
+                    'title': prefixed_title,
+                    'url': task_url,  # For 202, this is the task tracker URL
+                    'task_url': task_url if resp.status_code == 202 else '',
+                    'stream_title': config['stream_title'],
+                }
+            error_msg = self._extract_oslc_error(resp.text)
+            return {'error': f'HTTP {resp.status_code}: {error_msg}' if error_msg else f'HTTP {resp.status_code}'}
+        except Exception as e:
+            return {'error': str(e)}
+
+    def list_baselines(self, project_url: str) -> List[Dict]:
+        """List all baselines for a project's component.
+
+        Returns list of dicts with 'title', 'url', 'created', 'creator'.
+        """
+        self._ensure_auth()
+
+        config = self._get_component_and_stream(project_url)
+        if not config:
+            return []
+
+        baselines_url = f"{config['stream_url']}/baselines"
+
+        try:
+            resp = self.session.get(
+                baselines_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return []
+
+            root = ET.fromstring(resp.content)
+            ns_config = 'http://open-services.net/ns/config#'
+            ns_rdf = self._NS_OSLC['rdf']
+            ns_dcterms = self._NS_OSLC['dcterms']
+
+            baselines = []
+            for bl in root.findall(f'.//{{{ns_config}}}Baseline'):
+                about = bl.get(f'{{{ns_rdf}}}about', '')
+                title_el = bl.find(f'{{{ns_dcterms}}}title')
+                created_el = bl.find(f'{{{ns_dcterms}}}created')
+                creator_el = bl.find(f'{{{ns_dcterms}}}creator')
+
+                baselines.append({
+                    'title': title_el.text.strip() if title_el is not None and title_el.text else '',
+                    'url': about,
+                    'created': created_el.text if created_el is not None else '',
+                    'creator': creator_el.get(f'{{{ns_rdf}}}resource', '') if creator_el is not None else '',
+                })
+
+            return baselines
+        except Exception:
+            return []
+
     # ── EWM (Engineering Workflow Management) ────────────────
 
     def list_ewm_projects(self) -> List[Dict]:
