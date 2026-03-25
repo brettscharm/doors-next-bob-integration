@@ -54,9 +54,10 @@ When the user picks a project (by name or number), ask:
 > "What would you like to do with [project name]?
 > 1. **Read** — Browse modules and pull existing requirements
 > 2. **Generate Requirements** — Create new AI-generated requirements and push them to DNG
-> 3. **Create Tasks** — Generate EWM work items from requirements
-> 4. **Create Test Cases** — Generate ETM test cases from requirements
-> 5. **Full Lifecycle** — Requirements → Tasks → Test Cases (all three)"
+> 3. **Import PDF** — Parse a PDF into requirements and push to DNG (or re-import updated version)
+> 4. **Create Tasks** — Generate EWM work items from requirements
+> 5. **Create Test Cases** — Generate ETM test cases from requirements
+> 6. **Full Lifecycle** — Requirements → Tasks → Test Cases (all three)"
 
 ### Step 3a: READ Path
 If the user wants to read:
@@ -113,7 +114,46 @@ Ask these questions one at a time (not all at once). Wait for each answer before
 Tell the user:
 > "Done! I created X requirements in the '[folder name]' folder in [project name]. Open DNG to review them — move the ones you approve into the appropriate module."
 
-### Step 3c: CREATE TASKS Path (EWM)
+### Step 3c: PDF IMPORT / RE-IMPORT Path
+When the user provides a PDF to import into DNG (or re-import an updated version):
+
+**First Import (PDF → DNG):**
+
+1. Read the PDF locally and parse it into structured requirements using AI
+2. Identify logical sections, headings, and individual requirements
+3. **Present in a preview table** — show each parsed requirement with title, type, and content
+4. **Get explicit approval** before creating anything
+5. Call `create_requirements` to push them to DNG in a descriptive folder
+6. **Save the mapping** of requirement titles to their DNG URLs (shown in create output) — you'll need these for re-import
+
+**Re-Import (Updated PDF → update only changes):**
+
+1. Read the new PDF version locally
+2. Read the existing requirements from the DNG module using `get_module_requirements`
+3. **AI diff** — compare each requirement from the new PDF against the existing DNG requirements
+4. Identify: **changed** requirements, **new** requirements, **unchanged** requirements
+5. **Present a diff table:**
+
+   > Here's what changed between the versions:
+   >
+   > | # | Requirement | Change | Old Value | New Value |
+   > |---|-----------|--------|-----------|-----------|
+   > | 1 | Weight Constraints | Modified | 96,600 lbs | 100,600 lbs |
+   > | 2 | Safety Margin | Modified | 10% | 15% |
+   > | 3 | Internet Capability | **New** | — | LEM must transmit to satellites... |
+   > | 4-12 | (remaining) | Unchanged | — | — |
+   >
+   > **Want me to update the changed requirements and create the new ones?**
+
+6. Only after explicit approval:
+   - Call `update_requirement` for each changed requirement (pass the requirement URL + new content)
+   - Call `create_requirements` for any new requirements
+   - Skip unchanged requirements entirely
+
+**Important:** The `update_requirement` tool needs the requirement's URL. Get this from `get_module_requirements` output (each requirement shows its URL).
+
+### Step 3d: CREATE TASKS Path (EWM)
+
 When the user wants to create EWM tasks from requirements:
 
 **Phase 1: Gather source requirements**
@@ -146,7 +186,7 @@ When the user wants to create EWM tasks from requirements:
 Tell the user:
 > "Done! I created X tasks in EWM project '[project name]'. Each task is linked to its source requirement in DNG. A project lead can assign them to iterations and developers."
 
-### Step 3d: CREATE TEST CASES Path (ETM)
+### Step 3e: CREATE TEST CASES Path (ETM)
 When the user wants to create ETM test cases from requirements:
 
 **Phase 1: Gather source requirements**
@@ -186,7 +226,7 @@ If yes → call `create_test_result` for each specified test case.
 Tell the user:
 > "Done! I created X test cases in ETM project '[project name]'. Each test case validates its source requirement in DNG. Review them in ETM and approve the test plan."
 
-### Step 3e: FULL LIFECYCLE Path
+### Step 3f: FULL LIFECYCLE Path
 When the user wants the full lifecycle (Requirements → Tasks → Test Cases):
 
 1. **Phase 1:** Follow Step 3b (Generate Requirements) — create requirements in DNG
@@ -241,6 +281,7 @@ Only proceed after the user explicitly confirms. If ALL requirements ARE Approve
 | `get_artifact_types` | List artifact types for a DNG project | project_identifier |
 | `get_link_types` | List link types for a DNG project | project_identifier |
 | `create_requirements` | Create requirements in DNG | project_identifier, folder_name, requirements[] |
+| `update_requirement` | Update an existing requirement | requirement_url, title (optional), content (optional) |
 
 ### EWM (Work Items)
 

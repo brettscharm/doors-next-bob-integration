@@ -193,6 +193,8 @@ Every artifact is:
 | Create links (25 types) | DNG | `create_requirements` | ✅ |
 | Artifact type discovery | DNG | `get_artifact_types` | ✅ |
 | Link type discovery | DNG | `get_link_types` | ✅ |
+| Update existing requirements | DNG | `update_requirement` | ✅ |
+| PDF import / re-import (diff) | DNG | `update_requirement` + `create_requirements` | ✅ |
 | Save to file (JSON/CSV/MD) | Local | `save_requirements` | ✅ |
 | Create Tasks | EWM | `create_task` | ✅ |
 | Cross-tool link: Task → Requirement | EWM | `create_task` | ✅ |

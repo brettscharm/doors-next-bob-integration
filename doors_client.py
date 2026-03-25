@@ -960,6 +960,123 @@ class DOORSNextClient:
         except Exception:
             return None
 
+    def update_requirement(self, requirement_url: str,
+                            title: Optional[str] = None,
+                            content: Optional[str] = None) -> Optional[Dict]:
+        """Update an existing requirement in DNG.
+
+        Uses OSLC optimistic locking: GET to fetch ETag, then PUT with If-Match.
+
+        Args:
+            requirement_url: The full URL of the requirement to update
+            title: New title (optional — keeps existing if not provided)
+            content: New content as plain text (optional — keeps existing if not provided)
+
+        Returns:
+            Dict with 'title' and 'url' on success, or {'error': '...'} on failure.
+        """
+        self._ensure_auth()
+
+        if not title and not content:
+            return {'error': 'Nothing to update — provide title and/or content'}
+
+        # Step 1: GET the current requirement to obtain ETag and existing data
+        try:
+            get_resp = self.session.get(
+                requirement_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if get_resp.status_code != 200:
+                return {'error': f'Failed to fetch requirement: HTTP {get_resp.status_code}'}
+
+            etag = get_resp.headers.get('ETag', '')
+            if not etag:
+                return {'error': 'Server did not return an ETag — cannot update safely'}
+
+        except Exception as e:
+            return {'error': f'Failed to fetch requirement: {e}'}
+
+        # Step 2: Parse existing RDF to extract current values
+        try:
+            root = ET.fromstring(get_resp.content)
+        except Exception as e:
+            return {'error': f'Failed to parse requirement RDF: {e}'}
+
+        # Extract current title and description from the RDF
+        current_title = ''
+        current_desc = ''
+        ns = self._NS_OSLC
+        # Try multiple element paths
+        for elem in root.iter():
+            local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+            if local == 'title' and elem.text and not current_title:
+                current_title = elem.text
+            elif local == 'description' and not current_desc:
+                # Description may contain XML children (XHTML)
+                if elem.text:
+                    current_desc = elem.text
+
+        # Step 3: Build the updated title and content
+        new_title = title if title else current_title
+        if content:
+            xhtml_content = self._text_to_xhtml(content)
+        else:
+            xhtml_content = None
+
+        # Step 4: Modify the RDF — replace title and description in the raw XML
+        rdf_str = get_resp.content.decode('utf-8')
+
+        if title:
+            # Replace dcterms:title content
+            import re
+            rdf_str = re.sub(
+                r'(<dcterms:title[^>]*>)(.*?)(</dcterms:title>)',
+                lambda m: f'{m.group(1)}{self._escape_xml(new_title)}{m.group(3)}',
+                rdf_str,
+                count=1,
+                flags=re.DOTALL,
+            )
+
+        if xhtml_content:
+            # Replace dcterms:description content
+            import re
+            rdf_str = re.sub(
+                r'(<dcterms:description[^>]*>)(.*?)(</dcterms:description>)',
+                lambda m: f'{m.group(1)}{xhtml_content}{m.group(3)}',
+                rdf_str,
+                count=1,
+                flags=re.DOTALL,
+            )
+
+        # Step 5: PUT the updated RDF back with If-Match
+        try:
+            put_resp = self.session.put(
+                requirement_url,
+                data=rdf_str.encode('utf-8'),
+                headers={
+                    'Content-Type': 'application/rdf+xml',
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'If-Match': etag,
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if put_resp.status_code in [200, 204]:
+                return {
+                    'title': new_title,
+                    'url': requirement_url,
+                }
+            error_msg = self._extract_oslc_error(put_resp.text)
+            return {'error': f'HTTP {put_resp.status_code}: {error_msg}' if error_msg else f'HTTP {put_resp.status_code}'}
+        except Exception as e:
+            return {'error': f'PUT failed: {e}'}
+
     def _text_to_xhtml(self, text: str) -> str:
         """Convert plain text to XHTML content for DNG description field"""
         escaped = self._escape_xml(text)

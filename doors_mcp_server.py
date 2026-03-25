@@ -4,7 +4,7 @@ IBM ELM MCP Server for IBM Bob
 Provides tools for Bob to interact with IBM Engineering Lifecycle Management (ELM)
 Covers DNG (requirements), EWM (work items), and ETM (test management)
 
-Tools (11):
+Tools (12):
   1.  connect_to_dng          - Connect with credentials
   2.  list_projects           - List DNG/EWM/ETM projects (domain parameter)
   3.  get_modules             - Get modules from a DNG project
@@ -13,9 +13,10 @@ Tools (11):
   6.  get_artifact_types      - Discover artifact types for a DNG project
   7.  get_link_types          - Discover link types for a DNG project
   8.  create_requirements     - Create requirements with links in a descriptive folder
-  9.  create_task             - Create an EWM Task with optional DNG requirement link
-  10. create_test_case        - Create an ETM Test Case with optional DNG requirement link
-  11. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
+  9.  update_requirement      - Update an existing requirement's title and/or content
+  10. create_task             - Create an EWM Task with optional DNG requirement link
+  11. create_test_case        - Create an ETM Test Case with optional DNG requirement link
+  12. create_test_result      - Create an ETM Test Result (pass/fail) for a test case
 """
 
 import os
@@ -279,6 +280,33 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["project_identifier"]
+            }
+        ),
+        Tool(
+            name="update_requirement",
+            description=(
+                "Update an existing requirement in DNG. "
+                "Provide the requirement URL (from get_module_requirements or create_requirements) "
+                "and the new title and/or content. Uses OSLC optimistic locking (ETag). "
+                "Use this for PDF re-import workflows where only changed requirements need updating."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "requirement_url": {
+                        "type": "string",
+                        "description": "Full URL of the requirement to update (from get_module_requirements or create_requirements output)"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "New title for the requirement (optional — keeps existing if omitted)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "New content/description as plain text (optional — keeps existing if omitted)"
+                    }
+                },
+                "required": ["requirement_url"]
             }
         ),
         Tool(
@@ -831,6 +859,43 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             )
 
             return [TextContent(type="text", text="\n".join(lines))]
+
+        # ── update_requirement (DNG) ──────────────────────────
+        elif name == "update_requirement":
+            req_url = arguments.get("requirement_url", "")
+            new_title = arguments.get("title", "")
+            new_content = arguments.get("content", "")
+
+            if not req_url:
+                return [TextContent(type="text", text="Error: requirement_url is required.")]
+            if not new_title and not new_content:
+                return [TextContent(type="text", text="Error: provide at least one of title or content to update.")]
+
+            result = client.update_requirement(
+                requirement_url=req_url,
+                title=new_title or None,
+                content=new_content or None,
+            )
+
+            if result and 'error' not in result:
+                updated_fields = []
+                if new_title:
+                    updated_fields.append("title")
+                if new_content:
+                    updated_fields.append("content")
+                return [TextContent(type="text", text=(
+                    f"# Requirement Updated\n\n"
+                    f"- **Title:** {result['title']}\n"
+                    f"- **URL:** `{result['url']}`\n"
+                    f"- **Updated:** {', '.join(updated_fields)}"
+                ))]
+            else:
+                error_detail = result.get('error', '') if result else ''
+                return [TextContent(type="text", text=(
+                    f"Failed to update requirement.\n"
+                    f"{error_detail}\n\n"
+                    "This may be a permissions issue or a version conflict (another user edited it)."
+                ))]
 
         # ── create_task (EWM) ─────────────────────────────────
         elif name == "create_task":
