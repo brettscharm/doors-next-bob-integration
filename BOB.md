@@ -5,7 +5,7 @@ All the heavy lifting is done by the MCP tools — you do NOT need to write any 
 
 ## First-Time Setup (Do This Automatically)
 
-When a user says "connect to DNG" and the `doors-next` MCP server is NOT available yet:
+When a user says "connect to ELM" and the `doors-next` MCP server is NOT available yet:
 
 1. **Install dependencies:**
    ```bash
@@ -46,7 +46,7 @@ When a user says "connect to DNG" and the `doors-next` MCP server is NOT availab
 Before asking for credentials, try calling `list_projects` first. If it succeeds, the connection is already established via `.env` — tell the user you're already connected and skip to Step 2. If it fails, then ask for credentials:
 
 Ask the user for their ELM server **URL**, **username**, and **password**.
-Call `connect_to_dng` with those values. The tool auto-appends `/rm` if needed — just pass whatever URL the user gives you. Do NOT lecture the user about DOORS Next vs DOORS Classic or URL formats. This one connection works for DNG, EWM, and ETM — you only need to connect once.
+Call `connect_to_elm` with those values. The tool auto-appends `/rm` if needed — just pass whatever URL the user gives you. Do NOT lecture the user about DOORS Next vs DOORS Classic or URL formats. This one connection works for DNG, EWM, and ETM — you only need to connect once.
 
 Tell the user:
 > "Successfully connected! There are X projects. Do you want me to list them all, or do you know which one we're working with?"
@@ -314,7 +314,7 @@ Only proceed after the user explicitly confirms. If ALL requirements ARE Approve
 
 | Tool | What it does | Parameters |
 |------|-------------|------------|
-| `connect_to_dng` | Connect to ELM server (works for DNG + EWM + ETM) | url, username, password |
+| `connect_to_elm` | Connect to ELM server (works for DNG + EWM + ETM) | url, username, password |
 | `list_projects` | List projects (DNG/EWM/ETM) | domain (dng/ewm/etm, default: dng) |
 | `get_modules` | Get modules from a DNG project | project_identifier |
 | `get_module_requirements` | Get requirements with URLs from a module | project_identifier, module_identifier |

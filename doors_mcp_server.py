@@ -5,7 +5,7 @@ Provides tools for Bob to interact with IBM Engineering Lifecycle Management (EL
 Covers DNG (requirements), EWM (work items), and ETM (test management)
 
 Tools (14):
-  1.  connect_to_dng          - Connect with credentials
+  1.  connect_to_elm          - Connect with credentials
   2.  list_projects           - List DNG/EWM/ETM projects (domain parameter)
   3.  get_modules             - Get modules from a DNG project
   4.  get_module_requirements - Get requirements from a module
@@ -90,7 +90,7 @@ def _find_by_identifier(items: List[Dict], identifier: str, key: str = 'title') 
 async def list_tools() -> list[Tool]:
     return [
         Tool(
-            name="connect_to_dng",
+            name="connect_to_elm",
             description=(
                 "Connect to an IBM ELM server with credentials. "
                 "The URL can be the base server URL (e.g., https://server.com) "
@@ -463,8 +463,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     global _folder_cache
 
     try:
-        # ── connect_to_dng ────────────────────────────────────
-        if name == "connect_to_dng":
+        # ── connect_to_elm ────────────────────────────────────
+        if name == "connect_to_elm":
             url = arguments.get("url", "").strip().rstrip('/')
             username = arguments.get("username", "").strip()
             password = arguments.get("password", "").strip()
@@ -497,18 +497,22 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             _projects_cache = projects
 
             return [TextContent(type="text", text=(
-                f"Successfully connected to DOORS Next!\n\n"
-                f"There are **{len(projects)}** projects available.\n\n"
-                f"Would you like me to list all the projects, or do you know "
-                f"which specific one you'd like to work with today?"
+                f"Successfully connected to IBM ELM!\n\n"
+                f"Found **{len(projects)}** DNG projects.\n\n"
+                f"**What I can do:**\n"
+                f"- **DNG** — Read, create, and update requirements. Import PDFs. Create baselines.\n"
+                f"- **EWM** — Create Tasks linked to requirements.\n"
+                f"- **ETM** — Create Test Cases and record Test Results (pass/fail).\n"
+                f"- **Full Lifecycle** — Requirements → Tasks → Test Cases, all cross-linked.\n\n"
+                f"Which project would you like to work with?"
             ))]
 
         # ── All other tools require a connection ──────────────
         client = _get_or_create_client()
         if client is None:
             return [TextContent(type="text", text=(
-                "Not connected to DOORS Next.\n\n"
-                "Use the `connect_to_dng` tool with your server URL, username, and password."
+                "Not connected to ELM.\n\n"
+                "Use the `connect_to_elm` tool with your server URL, username, and password."
             ))]
 
         # ── list_projects ─────────────────────────────────────

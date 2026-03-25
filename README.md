@@ -17,12 +17,12 @@ git clone https://github.com/brettscharm/doors-next-bob-integration.git
 Open the project in VS Code with Bob, then say:
 
 ```
-Bob, connect to DNG
+Bob, connect to ELM
 ```
 
 Bob handles everything from there — installs dependencies, configures the MCP server, asks for your credentials, and connects.
 
-You'll need to **restart VS Code once** after the first setup so the MCP server activates. After that, just say "connect to DNG" and you're in.
+You'll need to **restart VS Code once** after the first setup so the MCP server activates. After that, just say "connect to ELM" and you're in.
 
 ---
 

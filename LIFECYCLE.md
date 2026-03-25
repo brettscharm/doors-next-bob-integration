@@ -184,7 +184,7 @@ Every artifact is:
 
 | Capability | Domain | MCP Tool | Status |
 |-----------|--------|----------|--------|
-| Connect to ELM | All | `connect_to_dng` | ✅ |
+| Connect to ELM | All | `connect_to_elm` | ✅ |
 | List projects (DNG/EWM/ETM) | All | `list_projects` | ✅ |
 | Read modules | DNG | `get_modules` | ✅ |
 | Read requirements with attributes | DNG | `get_module_requirements` | ✅ |
