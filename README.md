@@ -1,50 +1,78 @@
-# IBM ELM AI Agent
+# DOORS Next AI Agent
 
-An MCP server that lets Bob (or any AI coding assistant) read and write engineering artifacts across the IBM Engineering Lifecycle Management (ELM) suite -- DOORS Next (DNG), Engineering Workflow Management (EWM), and Engineering Test Management (ETM).
+An MCP server that lets AI coding assistants (Claude, Bob, Copilot, Cursor, etc.) read and write engineering artifacts across the IBM Engineering Lifecycle Management (ELM) suite — DOORS Next (DNG), Engineering Workflow Management (EWM), and Engineering Test Management (ETM).
 
-**20 MCP tools** covering the full requirements-to-test lifecycle with read+write capabilities across DNG, EWM, and ETM.
+**20 MCP tools + 4 prompts + 3 resource templates** covering the full requirements-to-test lifecycle with read+write capabilities across DNG, EWM, and ETM.
 
-**This is NOT an official IBM product.** Built by Brett Scharmett and Bob for demo purposes.
+**This is NOT an official IBM product.** Built by Brett Scharmett for demo purposes.
 
 ---
 
 ## Setup
 
 ```bash
-git clone https://github.com/brettscharm/doors-next-bob-integration.git
+git clone https://github.com/brettscharm/doors-next-ai-agent.git
 ```
 
-Open the project in VS Code with Bob, then say:
+Open the project in your IDE (VS Code, Cursor, Windsurf, etc.) with an AI assistant, then say:
 
 ```
-Bob, connect to ELM
+Connect to ELM
 ```
 
-Bob handles everything from there — installs dependencies, configures the MCP server, asks for your credentials, and connects.
+The AI handles everything from there — installs dependencies, configures the MCP server, asks for your credentials, and connects.
 
-You'll need to **restart VS Code once** after the first setup so the MCP server activates. After that, just say "connect to ELM" and you're in.
+**First-time only:** You may need to reload your IDE window after the MCP server is configured. Claude Code hot-reloads automatically — no restart needed.
 
 ---
 
 ## What It Does
 
 **Read (DNG):**
-1. **Connect** — Bob asks for your ELM server URL, username, and password
-2. **Projects** — List all 107 DNG projects, 101 EWM projects, or 77 ETM projects
+1. **Connect** — asks for your ELM server URL, username, and password (or reads from `.env`)
+2. **Projects** — List all DNG, EWM, or ETM projects
 3. **Modules** — Browse modules from any project
-4. **Requirements** — Read requirements with full attributes, custom fields, and 26 artifact types
-5. **Link Types** — Discover all 25 link types (Satisfies, Elaborated By, etc.)
-6. **Save** — Export to JSON, CSV, or Markdown
+4. **Requirements** — Read requirements with full attributes, custom fields, and artifact types
+5. **Search** — Full-text search across all artifacts in a project (OSLC query)
+6. **Link Types** — Discover all link types (Satisfies, Elaborated By, etc.)
+7. **Save** — Export to JSON, CSV, or Markdown
 
 **Write (DNG):**
-7. **Create** — Generate requirements with [AI Generated] prefix, rich XHTML content, and links
-8. **Organize** — Create descriptive folders for AI-generated artifacts
+8. **Create** — Generate IEEE 29148-compliant requirements with measurable acceptance criteria
+9. **Organize** — Create modules and folders for AI-generated artifacts
+10. **Update** — Modify existing requirements (with ETag optimistic locking)
+11. **Baselines** — Create, list, and compare baseline snapshots
 
 **Full Lifecycle (DNG + EWM + ETM):**
-- Create a requirement in DNG
-- Create a Task in EWM linked to that requirement
-- Create a Test Case, Test Script, Test Execution Record, and Test Result in ETM linked back to the requirement
-- All 6 lifecycle artifacts confirmed working against live IBM ELM server
+- Create requirements in DNG with acceptance criteria
+- Create Tasks in EWM linked to requirements (with verification methods)
+- Create Test Cases in ETM linked to requirements (with preconditions, steps, pass/fail criteria)
+- Record Test Results (pass/fail/blocked/incomplete/error)
+- All artifacts cross-linked for full traceability
+
+**MCP Prompts (workflow templates):**
+- `/generate-requirements` — Structured requirements generation with standards compliance
+- `/full-lifecycle` — Requirements → Tasks → Test Cases, all cross-linked
+- `/import-pdf` — Parse a PDF into requirements and push to DNG
+- `/review-requirements` — Quality review against IEEE 29148 criteria
+
+**MCP Resources (context for AI):**
+- `elm://projects/{domain}` — Browse projects
+- `elm://project/{name}/modules` — Browse modules
+- `elm://project/{name}/module/{name}/requirements` — Read requirements
+
+---
+
+## Supported AI Assistants
+
+| Assistant | MCP Config Location | Restart? |
+|-----------|-------------------|----------|
+| **Claude Code** | `~/.claude/settings.json` | No — hot-reloads |
+| **VS Code (Bob / Copilot)** | `.vscode/mcp.json` | Reload window |
+| **Cursor** | `.cursor/mcp.json` | Reload window |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Reload window |
+
+The AI auto-detects your IDE and writes the config for you.
 
 ---
 
@@ -57,21 +85,34 @@ cp .env.example .env
 # Edit .env with your actual credentials
 ```
 
+The server auto-connects when `.env` is present. Handles both Basic Auth and Form-Based Auth (j_security_check), and auto-retries with SSL verification disabled for self-signed certificates.
+
 ---
 
 ## Project Structure
 
 ```
-doors-next-bob-integration/
-├── BOB.md                 # Instructions Bob reads automatically
-├── CLAUDE.md              # Instructions for Claude Code
+doors-next-ai-agent/
+├── BOB.md                 # Instructions the AI reads automatically
+├── CLAUDE.md              # Pointer to BOB.md for Claude Code
 ├── LIFECYCLE.md           # Full lifecycle vision and status tracker
 ├── README.md              # This file
 ├── doors_client.py        # ELM API client (DNG + EWM + ETM)
-├── doors_mcp_server.py    # MCP server (20 tools)
+├── doors_mcp_server.py    # MCP server (20 tools, 4 prompts, 3 resources)
 ├── requirements.txt       # Python dependencies
 └── .env.example           # Credential template
 ```
+
+---
+
+## Engineering Quality
+
+Requirements generated by this agent follow IEEE 29148 / INCOSE best practices:
+- **"shall" language** for mandatory behavior
+- **Atomic** — one testable behavior per requirement
+- **Measurable acceptance criteria** — numeric thresholds, time limits, conditions
+- **Standards compliance** — references to DO-178C, ISO 26262, MIL-STD-882, etc. when applicable
+- **Structured test cases** — preconditions, numbered steps, expected results, pass/fail criteria
 
 ---
 
@@ -79,13 +120,16 @@ doors-next-bob-integration/
 
 | Problem | Fix |
 |---------|-----|
-| Bob can't see the MCP server | Restart VS Code after first setup |
-| Authentication fails | Check username/password. The tool auto-appends `/rm` so either `https://server.com` or `https://server.com/rm` works. |
+| AI can't see the MCP server | Reload your IDE window (or restart for first-time setup) |
+| Authentication fails | Check username/password. The server handles both Basic and Form-Based Auth automatically. |
+| SSL certificate error | The server auto-retries without SSL verification for self-signed certs. |
 | No modules found | Check your DNG permissions for that project |
+| Search returns no results | OSLC query is used — ensure the project has indexed content |
+| EWM/ETM creation fails with 403 | Your user needs write permissions in the target EWM/ETM project |
 
 ---
 
 ## Support
 
-- GitHub Issues: https://github.com/brettscharm/doors-next-bob-integration/issues
+- GitHub Issues: https://github.com/brettscharm/doors-next-ai-agent/issues
 - Email: brett.scharmett@ibm.com

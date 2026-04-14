@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-IBM ELM MCP Server for IBM Bob
-Provides tools for Bob to interact with IBM Engineering Lifecycle Management (ELM)
+DOORS Next AI Agent — MCP Server
+Provides tools for AI assistants to interact with IBM Engineering Lifecycle Management (ELM)
 Covers DNG (requirements), EWM (work items), and ETM (test management)
 
 Tools (20):
