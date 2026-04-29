@@ -975,112 +975,222 @@ class DOORSNextClient:
             return {'error': str(e)}
 
     def add_to_module(self, module_url: str, requirement_urls: List[str]) -> Dict:
-        """Attempt to bind existing requirements to a DNG module.
+        """Bind one or more existing requirements to a DNG module.
 
-        The standard OSLC RM 2.0 pattern (GET module + ETag, append
-        <oslc_rm:uses>, PUT with If-Match) is implemented here for DNG
-        deployments that allow it. On goblue.clm.ibmcloud.com this returns
-        HTTP 400 "Content must be valid rdf+xml" no matter what — module
-        structure is locked down and only writeable via DNG UI / ReqIF
-        import on this server. See probe/MODULE_BINDING_FINDINGS.md.
+        Uses DNG's Module Structure API (the writable surface that the
+        legacy oslc_rm:uses route doesn't expose). Pattern, all live-verified:
+
+          1. GET <module_url> with header DoorsRP-Request-Type: public 2.0
+             — returns the new-style RDF that includes a *:structure ref
+          2. GET <structure_url> with same header
+             — returns the structure RDF + ETag
+          3. Modify the structure root: replace its childBindings (which
+             starts as rdf:nil for an empty module, or a Collection for
+             a populated one) with a Collection that includes the new
+             Bindings.
+          4. PUT <structure_url> with If-Match — returns 202 + task tracker
+          5. Poll task tracker until oslc_auto:state != inProgress
+
+        Each new Binding requires:
+          rdf:about="<structure_url>#N"          (server uses to mint UUID)
+          oslc_config:component                  (the GCM component)
+          j.0:boundArtifact                      (the requirement URL)
+          j.0:module                             (the parent module URL)
+          j.0:childBindings rdf:resource=...#nil  (leaf — no nested children)
+
+        Critical headers:
+          DoorsRP-Request-Type: public 2.0       (camelCase, NOT DOORS-RP-)
+          vvc.configuration: <stream_url>        (GCM stream)
+          DO NOT send OSLC-Core-Version or Configuration-Context
 
         Args:
-            module_url: The module artifact URL (typically .../resources/MD_*).
-            requirement_urls: One or more existing requirement URLs to bind.
+            module_url: The module artifact URL (.../resources/MD_*).
+            requirement_urls: Existing requirement URLs to bind.
 
         Returns:
-            {'added': int, 'module_url': str} on success, or {'error': '...'}.
-            On servers that lock down module-structure writes, the error
-            message guides the user to drag-bind in DNG.
+            {'added': int, 'module_url': str} on success
+            {'error': str, 'module_url': str} on failure.
         """
         self._ensure_auth()
-
         if not requirement_urls:
-            return {'error': 'requirement_urls is empty'}
+            return {'error': 'requirement_urls is empty', 'module_url': module_url}
 
+        # ── Discover the GCM stream we're working in ──────────────
         try:
-            get_resp = self.session.get(
+            mod_resp = self.session.get(
                 module_url,
-                headers={
-                    'Accept': 'application/rdf+xml',
-                    'OSLC-Core-Version': '2.0',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
+                headers={'Accept': 'application/rdf+xml'},
                 timeout=self._TIMEOUT,
             )
-            if get_resp.status_code != 200:
-                return {'error': f'Failed to fetch module: HTTP {get_resp.status_code}'}
-            etag = get_resp.headers.get('ETag', '')
+            if mod_resp.status_code != 200:
+                return {'error': f'Failed to fetch module: HTTP {mod_resp.status_code}',
+                        'module_url': module_url}
+            comp_match = re.search(
+                r'oslc_config:component\s+rdf:resource="([^"]+)"', mod_resp.text)
+            if not comp_match:
+                return {'error': 'Module has no oslc_config:component (non-GCM project?)',
+                        'module_url': module_url}
+            component_url = comp_match.group(1)
+
+            cfg_resp = self.session.get(
+                f"{component_url}/configurations",
+                headers={'Accept': 'application/rdf+xml'},
+                timeout=self._TIMEOUT,
+            )
+            stream_match = re.search(
+                r'rdfs:member\s+rdf:resource="([^"]+)"', cfg_resp.text)
+            if not stream_match:
+                return {'error': 'Could not discover active GCM stream for this component',
+                        'module_url': module_url}
+            stream_url = stream_match.group(1)
+        except Exception as e:
+            return {'error': f'GCM discovery failed: {e}', 'module_url': module_url}
+
+        struct_headers = {
+            'Accept': 'application/rdf+xml',
+            'DoorsRP-Request-Type': 'public 2.0',
+            'vvc.configuration': stream_url,
+        }
+
+        # ── Step 1: GET module with the magic header → discover /structure ─
+        try:
+            r = self.session.get(module_url, headers=struct_headers,
+                                 timeout=self._TIMEOUT)
+            struct_match = re.search(
+                r'(?:j\.\d+|module|jazz_rm):structure\s+rdf:resource="([^"]+)"',
+                r.text,
+            )
+            if not struct_match:
+                # Try a plain /structure URL match as fallback
+                struct_match = re.search(
+                    r'rdf:resource="(https?://[^"]+/structure)"', r.text)
+            if not struct_match:
+                return {'error': 'Could not discover module /structure URL '
+                                  '(server may not support DoorsRP-Request-Type)',
+                        'module_url': module_url}
+            structure_url = struct_match.group(1)
+        except Exception as e:
+            return {'error': f'Module GET failed: {e}', 'module_url': module_url}
+
+        # ── Step 2: GET the structure resource ────────────────────
+        try:
+            sr = self.session.get(structure_url, headers=struct_headers,
+                                  timeout=self._TIMEOUT)
+            if sr.status_code != 200:
+                return {'error': f'Structure GET failed: HTTP {sr.status_code}',
+                        'module_url': module_url}
+            etag = sr.headers.get('ETag', '')
             if not etag:
-                return {'error': 'Module GET returned no ETag — cannot update safely'}
+                return {'error': 'Structure GET returned no ETag',
+                        'module_url': module_url}
+            structure_body = sr.text
         except Exception as e:
-            return {'error': f'Failed to fetch module: {e}'}
+            return {'error': f'Structure GET error: {e}', 'module_url': module_url}
 
-        rdf_str = get_resp.content.decode('utf-8')
-
-        # Build the new <oslc_rm:uses> lines. Skip URLs already bound (idempotent).
-        existing = set(re.findall(r'oslc_rm:uses\s+rdf:resource="([^"]+)"', rdf_str))
-        to_add = [u for u in requirement_urls if u and u not in existing]
+        # Idempotency: skip URLs that are already bound
+        existing_bound = set(re.findall(
+            r'j\.0:boundArtifact\s+rdf:resource="([^"]+)"', structure_body))
+        to_add = [u for u in requirement_urls if u and u not in existing_bound]
         if not to_add:
-            return {'added': 0, 'module_url': module_url, 'note': 'all requirements already bound'}
+            return {'added': 0, 'module_url': module_url,
+                    'note': 'all requirements already bound'}
 
-        new_lines = ''.join(
-            f'    <oslc_rm:uses rdf:resource="{u}"/>\n' for u in to_add
+        # ── Step 3: Build new bindings + splice into structure body ───
+        new_bindings = ''
+        for i, req_url in enumerate(to_add, start=1):
+            binding_id = f"{structure_url}#{i}"
+            new_bindings += (
+                f'    <j.0:Binding rdf:about="{binding_id}">\n'
+                f'      <oslc_config:component rdf:resource="{component_url}"/>\n'
+                f'      <j.0:boundArtifact rdf:resource="{req_url}"/>\n'
+                f'      <j.0:module rdf:resource="{module_url}"/>\n'
+                f'      <j.0:childBindings rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>\n'
+                f'    </j.0:Binding>\n'
+            )
+
+        nil_pattern = re.compile(
+            r'<j\.0:childBindings\s+rdf:resource="[^"]*#nil"\s*/>',
+            re.DOTALL,
         )
-
-        # Insert before the closing </rdf:Description> of the module's own
-        # description block. The module RDF has the module's rdf:Description
-        # first (its rdf:about matches module_url); injecting before its
-        # closing tag is the safe spot.
-        # We match the FIRST </rdf:Description> after the module's rdf:about.
-        module_about_pattern = re.escape(module_url)
-        injected = re.sub(
-            rf'(<rdf:Description\s+rdf:about="{module_about_pattern}"[^>]*>)(.*?)(\s*</rdf:Description>)',
-            lambda m: f'{m.group(1)}{m.group(2)}\n{new_lines}{m.group(3)}',
-            rdf_str,
-            count=1,
-            flags=re.DOTALL,
-        )
-
-        if injected == rdf_str:
-            # rdf:about may use rdf:nodeID style — fall back to first Description
-            injected = re.sub(
-                r'(<rdf:Description[^>]*>)(.*?)(\s*</rdf:Description>)',
-                lambda m: f'{m.group(1)}{m.group(2)}\n{new_lines}{m.group(3)}',
-                rdf_str,
+        if nil_pattern.search(structure_body):
+            # Empty module: replace nil with a populated Collection
+            new_body = nil_pattern.sub(
+                '<j.0:childBindings rdf:parseType="Collection">\n'
+                + new_bindings
+                + '  </j.0:childBindings>',
+                structure_body,
                 count=1,
-                flags=re.DOTALL,
             )
-            if injected == rdf_str:
-                return {'error': 'Could not locate module rdf:Description block to inject into'}
+        elif '</j.0:childBindings>' in structure_body:
+            # Populated module: insert into existing Collection
+            new_body = structure_body.replace(
+                '</j.0:childBindings>',
+                new_bindings + '</j.0:childBindings>',
+                1,
+            )
+        else:
+            return {'error': 'Could not locate childBindings (neither nil nor Collection)',
+                    'module_url': module_url}
 
+        # ── Step 4: PUT the structure ─────────────────────────────
+        put_headers = dict(struct_headers)
+        put_headers['Content-Type'] = 'application/rdf+xml'
+        put_headers['If-Match'] = etag
         try:
-            put_resp = self.session.put(
-                module_url,
-                data=injected.encode('utf-8'),
-                headers={
-                    'Content-Type': 'application/rdf+xml',
-                    'Accept': 'application/rdf+xml',
-                    'OSLC-Core-Version': '2.0',
-                    'If-Match': etag,
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                timeout=self._TIMEOUT,
-            )
-            if put_resp.status_code in (200, 204):
-                return {'added': len(to_add), 'module_url': module_url}
-            error_msg = self._extract_oslc_error(put_resp.text)
-            # Server-side restriction: many ELM deployments lock module-structure
-            # writes. Translate the cryptic 400 into something actionable.
-            if put_resp.status_code == 400 and 'valid rdf+xml' in (error_msg or '').lower():
-                return {'error': (
-                    'This DNG server does not allow module-structure writes via OSLC. '
-                    'Open the module in DNG and drag the listed requirements in from the '
-                    'folder, or use ReqIF import for bulk loading.'
-                )}
-            return {'error': f'HTTP {put_resp.status_code}: {error_msg}' if error_msg else f'HTTP {put_resp.status_code}'}
+            pr = self.session.put(structure_url,
+                                  data=new_body.encode('utf-8'),
+                                  headers=put_headers,
+                                  timeout=self._TIMEOUT,
+                                  allow_redirects=False)
         except Exception as e:
-            return {'error': f'PUT failed: {e}'}
+            return {'error': f'Structure PUT failed: {e}', 'module_url': module_url}
+
+        if pr.status_code != 202:
+            err = self._extract_oslc_error(pr.text)
+            return {'error': f'Structure PUT HTTP {pr.status_code}: '
+                              f'{err or pr.text[:200]}',
+                    'module_url': module_url}
+
+        task_url = pr.headers.get('Location')
+        if not task_url:
+            return {'error': '202 returned but no Location task tracker',
+                    'module_url': module_url}
+
+        # ── Step 5: Poll the task tracker ─────────────────────────
+        import time as _t
+        deadline = _t.time() + 30
+        delay = 0.5
+        verdict = None
+        while _t.time() < deadline:
+            try:
+                tr = self.session.get(
+                    task_url,
+                    headers={'Accept': 'application/rdf+xml'},
+                    timeout=self._TIMEOUT,
+                )
+            except Exception as e:
+                return {'error': f'Task tracker poll failed: {e}',
+                        'module_url': module_url}
+            state = re.search(r'oslc_auto:state\s+rdf:resource="([^"]+)"', tr.text)
+            verdict_m = re.search(r'oslc_auto:verdict\s+rdf:resource="([^"]+)"', tr.text)
+            state_uri = state.group(1) if state else ''
+            verdict = verdict_m.group(1) if verdict_m else ''
+            if 'inProgress' not in state_uri and 'queued' not in state_uri:
+                if 'unavailable' not in verdict:
+                    break
+            _t.sleep(delay)
+            delay = min(delay * 2, 3.0)
+
+        if verdict and 'passed' in verdict:
+            return {'added': len(to_add), 'module_url': module_url}
+
+        # Pull the error detail if present
+        err_msg = re.search(r'<oslc:message[^>]*>([^<]+)', tr.text)
+        return {
+            'error': (f'Module update finished with verdict={verdict}. '
+                      f'{err_msg.group(1) if err_msg else ""}'.strip()),
+            'module_url': module_url,
+        }
 
     # ── Write: Folders ────────────────────────────────────────
 

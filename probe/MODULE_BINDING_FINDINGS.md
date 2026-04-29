@@ -1,20 +1,94 @@
 # Module-Binding Investigation — Findings
 
-## TL;DR
+## TL;DR — RESOLVED 🎉
 
-**`create_module` works.** Creating a new module artifact (RequirementCollection)
-via POST to `/rm/requirementFactory` succeeds and returns a valid `MD_*` URL.
+**`create_module` works.** Module artifacts are created via
+`POST /rm/requirementFactory`.
 
-**Programmatically adding requirements to a module's `oslc_rm:uses` does NOT
-work on this DNG server.** Every variant of PUT/PATCH against the module
-returned `400 CRRRS6401E "Error parsing content. Content must be valid rdf+xml"`
-even though the body is valid RDF/XML by every parser I tried, AND a no-op
-PUT (echoing the GET response back) returns `200 OK`.
+**Adding requirements to a module's structure now also works** via DNG's
+**Module Structure API** — a separate writable surface from the legacy
+`oslc_rm:uses` view. We discovered this from a jazz.net forum post + IBM's
+own ELM-Python-Client and verified end-to-end live:
 
-This is a server-side restriction, not a client bug. DNG locks down
-module-structure manipulation; the standard OSLC RM 2.0 PUT pattern that
-works for `oslc_rm:Requirement` does not work for `oslc_rm:RequirementCollection`
-when the only change is added `oslc_rm:uses` triples.
+```
+client.add_to_module(module_url, [req1, req2, req3])
+→ {'added': 3, 'module_url': '...'}
+```
+
+The MCP tool `create_requirements` with `module_name` now auto-binds: the
+requirements appear inside the module immediately, no manual drag-bind in
+DNG required.
+
+The recipe is in `doors_client.py:add_to_module` and exercised in
+`probe/20_module_structure_api.py`. Below is the full investigation that
+got us here, kept for future maintainers (e.g. when porting to another
+DNG version).
+
+## What works
+
+| Operation | Status |
+|---|---|
+| Create a new module | ✅ `create_module` (REST factory POST) |
+| Bind existing requirements to an existing module | ✅ `add_to_module` (Structure API) |
+| Auto-create + bind in one call (MCP tool) | ✅ `create_requirements` with `module_name` |
+| Update module title/description | ✅ standard OSLC PUT works on the module URL |
+| Update individual requirements (title, body, attrs) | ✅ unaffected by the binding lockdown |
+
+## How the Structure API works (the working recipe)
+
+```
+1. GET <module_url>
+     headers: DoorsRP-Request-Type: public 2.0
+              vvc.configuration: <gcm_stream_url>
+   → returns RDF with a `*:structure` predicate pointing at <module_url>/structure
+
+2. GET <module_url>/structure
+     same headers
+   → returns the structure RDF + ETag
+   → empty modules: childBindings = rdf:nil
+   → populated modules: childBindings = Collection of <j.0:Binding> entries
+
+3. Replace nil with Collection (or splice into existing Collection):
+   <j.0:childBindings rdf:parseType="Collection">
+     <j.0:Binding rdf:about="<structure_url>#1">
+       <oslc_config:component rdf:resource="<gcm_component>"/>
+       <j.0:boundArtifact rdf:resource="<req_url>"/>
+       <j.0:module rdf:resource="<module_url>"/>
+       <j.0:childBindings rdf:resource="...rdf-syntax-ns#nil"/>
+     </j.0:Binding>
+     ... more bindings ...
+   </j.0:childBindings>
+
+4. PUT <module_url>/structure
+     headers: DoorsRP-Request-Type: public 2.0
+              vvc.configuration: <gcm_stream_url>
+              If-Match: <etag>
+              Content-Type: application/rdf+xml
+   → returns 202 + Location: <task_tracker_url>
+
+5. Poll <task_tracker_url> until oslc_auto:state ≠ inProgress
+   → success: oslc_auto:verdict = passed
+   → failure: oslc_auto:verdict = error (with oslc:Error inside)
+```
+
+## Three non-obvious gotchas that broke earlier probes
+
+1. **Header is `DoorsRP-Request-Type: public 2.0`** (camelCase, no hyphen
+   between Doors and RP). The jazz.net forum post had the spelling slightly
+   wrong as `DOORS-RP-Request-Type` — that variant returns the legacy
+   read-only view. The correct form was confirmed against IBM's
+   ELM-Python-Client `examples/dn_simple_modulestructure.py:191`.
+
+2. **`OSLC-Core-Version` and `Configuration-Context` headers MUST be
+   omitted.** They conflict with `vvc.configuration` on this endpoint. The
+   IBM client explicitly nulls them out at every structure-API request.
+
+3. **Each new Binding needs `rdf:about="<structure_url>#N"`.** Without it,
+   the server returns `IllegalArgumentException: invalid UUID` because it
+   can't generate a stable URI for the binding. Use sequential `#1, #2, ...`
+   integers — DNG mints a real UUID and replaces them.
+
+## What was tried before the breakthrough (kept for reference)
 
 ## What I tested (live, against `Gio (Brett) (Requirements)` sandbox)
 
@@ -105,16 +179,35 @@ out CSV-based REST import. Findings:
 `services.xml` advertises **only ReqIF** as the import factory (no CSV
 factory exists). Confirmed across 18 endpoint variants.
 
-**Verdict: ReqIF import is the only documented programmatic bulk-load
-path on this server.** The OSLC PUT/PATCH route, the DNG private "views"
-endpoint, the in-flight `&moduleURI=` factory parameter, and the CSV
-REST endpoint all return either lockdown responses or 404s.
+**Verdict: programmatic module-binding is not viable via DNG's
+public REST surface on this server version (DNG 7.1.0 SR1).**
+Every documented and undocumented avenue tested — OSLC PUT/PATCH,
+DNG private `/rm/views` endpoint, in-flight `&moduleURI=` factory
+param, CSV REST import — returns either a lockdown response or a
+404. ReqIF was prototyped (probe agent attempt 2026-04-29) but the
+DNG ReqIF importer responded with `"userMimeType property cannot
+be found"` and a stack of additional DNG-specific shape
+requirements; the round-trip update story is also messy (ReqIF
+re-import doesn't merge into an existing module on standard DNG —
+it creates a new Specification each time, leaving the user to
+delete the old one). Net assessment: ReqIF closes the *create*
+case but opens new churn around updates.
 
-## Open implementation paths (in increasing effort)
+## What we ship instead
 
-1. **Manual drag-bind in DNG UI** — works today. ~30 sec per module.
-2. **Skeleton ReqIF** (~1 day) — minimal valid ReqIF that says "specification X has child binding to existing artifact Y." Skips datatype/type-system replication because the artifacts and types already exist (they were created by `requirementFactory`). Multipart upload of `.reqifz` to `/rm/reqif_oslc/import?componentURI=…`, then poll `/rm/reqif_oslc/imports/<id>` until done.
-3. **Full ReqIF** (~1 week) — closes the gap robustly across server versions. Handles datatype/type-system replication, all DNG attribute types, async import status polling, error feedback. Worth doing if the MCP needs to support arbitrary ELM deployments, not just goblue.
+The MCP exposes `create_module` (which creates the module artifact
+correctly) and `create_requirements` (which creates artifacts in a
+folder). The user binds them in the DNG UI in ~30 seconds:
+
+1. Open the module created by `create_module`.
+2. Click the "+" / "Insert" button.
+3. Choose "Existing artifacts" and pick from the folder created by
+   `create_requirements`.
+4. Confirm.
+
+This is a one-time UI step per module. Subsequent in-place edits
+(title, primary text, attributes, links) all work via the OSLC
+write tools — only the *children list* of a module is locked.
 
 ## Probes that produced these findings
 
