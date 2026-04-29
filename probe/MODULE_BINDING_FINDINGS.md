@@ -88,11 +88,33 @@ sandbox permissions were granted. None worked:
 | H3 — POST requirement with `nav:parent=<module URL>` | `POST /rm/requirementFactory?projectURL=…` with module as parent | **403 Forbidden** + "Content must be valid rdf+xml" |
 | H4 — PUT with `vvc.configuration` query param + `Configuration-Context` header | `PUT <module-url>?vvc.configuration=<stream>` | **400** "Content must be valid rdf+xml" |
 
+## Path A (CSV REST import) — also dead
+
+`probe/18_csv_import_probe.py` and `probe/19_csv_endpoint_dig.py` ruled
+out CSV-based REST import. Findings:
+
+| Endpoint tested | Result |
+|---|---|
+| `/rm/import/csv` | **403** with `"CRRRS4142E ... requires a private header"` — first-party internal RPC endpoint, not an OSLC REST API. Same backing service the DNG UI's CSV import wizard uses, gated behind a `DoorsRP-Request-Type: private` header that only authenticated UI sessions hold. |
+| `/rm/import-sessions` | 404 — no such endpoint |
+| `/rm/type-import-sessions` | Exists, but accepts only type-system payloads (artifact type definitions, attribute schemas) — NOT requirement data |
+| `/rm/publish/csv` and `/rm/publish/import` | 400 generic; legacy export endpoints, not import |
+| `/rm/web/_amw/insert` | 200 but returns the DNG UI HTML page — it's a UI route, not an API |
+| `/rm/dataIngester` and friends | 404 |
+
+`services.xml` advertises **only ReqIF** as the import factory (no CSV
+factory exists). Confirmed across 18 endpoint variants.
+
 **Verdict: ReqIF import is the only documented programmatic bulk-load
 path on this server.** The OSLC PUT/PATCH route, the DNG private "views"
-endpoint, and the in-flight `&moduleURI=` factory parameter all return
-the same lockdown response. This is consistent with IBM's documented
-recommendation for non-trivial module loading: use ReqIF.
+endpoint, the in-flight `&moduleURI=` factory parameter, and the CSV
+REST endpoint all return either lockdown responses or 404s.
+
+## Open implementation paths (in increasing effort)
+
+1. **Manual drag-bind in DNG UI** — works today. ~30 sec per module.
+2. **Skeleton ReqIF** (~1 day) — minimal valid ReqIF that says "specification X has child binding to existing artifact Y." Skips datatype/type-system replication because the artifacts and types already exist (they were created by `requirementFactory`). Multipart upload of `.reqifz` to `/rm/reqif_oslc/import?componentURI=…`, then poll `/rm/reqif_oslc/imports/<id>` until done.
+3. **Full ReqIF** (~1 week) — closes the gap robustly across server versions. Handles datatype/type-system replication, all DNG attribute types, async import status polling, error feedback. Worth doing if the MCP needs to support arbitrary ELM deployments, not just goblue.
 
 ## Probes that produced these findings
 
@@ -105,3 +127,5 @@ recommendation for non-trivial module loading: use ReqIF.
 - `probe/13_create_in_module.py` — `&moduleURI=` factory param (created req, no binding)
 - `probe/14_diag_strip_description.py` — strip Literal description (still 400)
 - `probe/16_module_bind_final.py` — H1/H2/H3/H4 above (all blocked)
+- `probe/18_csv_import_probe.py` — surveyed services.xml + 21 candidate URLs for CSV import
+- `probe/19_csv_endpoint_dig.py` — deep-probed the 4 promising endpoints (all dead-ended)
