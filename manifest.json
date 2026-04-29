@@ -66,6 +66,8 @@
   },
   "compatibility": {
     "platforms": ["darwin", "linux", "win32"],
-    "python": ">=3.9"
+    "runtimes": {
+      "python": ">=3.9"
+    }
   }
 }

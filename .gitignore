@@ -57,6 +57,9 @@ requirements.md
 *.csv
 charts/
 
+# MCPB bundle artifacts (built locally; published to Smithery, not git)
+*.mcpb
+
 # Per-machine MCP configs (setup.py writes absolute paths into them)
 .mcp.json
 .cursor/

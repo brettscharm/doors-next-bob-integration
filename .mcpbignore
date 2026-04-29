@@ -1,0 +1,43 @@
+# Files that should NOT ship inside the .mcpb bundle.
+# Bundles end up on every user's machine — keep them lean and free of
+# project-specific demo data.
+
+# Per-machine MCP/AI host configs (each user has their own)
+.mcp.json
+.bob/
+.vscode/
+.cursor/
+.codeium/
+
+# Credentials (NEVER include the user's .env)
+.env
+.env.local
+.env.*.local
+
+# Git internals
+.git/
+.gitignore
+.gitattributes
+
+# Probe scripts and research artifacts — these are repo development
+# notes; users don't need them when running the MCP
+probe/
+
+# Generated charts (per-machine output)
+charts/
+
+# Dev/IDE noise
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.pytest_cache/
+.coverage
+.mypy_cache/
+*.log
+
+# Old/sibling dirs that may exist next to a clone
+doors-next-bob-integration/
+
+# The bundle itself
+*.mcpb
