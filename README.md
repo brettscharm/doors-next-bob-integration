@@ -28,40 +28,42 @@ The MCP server itself does **zero AI generation** — every tool is a determinis
 
 ---
 
-## Quick Start (≈ 2 minutes)
+## Quick Start
 
-You need: Python 3.9+, an ELM account, and one of: Claude Code, VS Code (with Copilot/Bob), Cursor, or Windsurf.
+You need: Python 3.9+, git, an ELM account, and an AI assistant that speaks MCP (IBM Bob, Claude Code, Cursor, VS Code with Copilot, Windsurf, etc.).
 
-### Option A — Smithery (one-line install for IBM Bob, Claude Code, Cursor, etc.)
+### Recommended: one-line install (works for IBM Bob and every other host)
+
+Open a terminal and run:
 
 ```bash
-# Once Smithery CLI is installed
-npm install -g @smithery/cli       # one-time
-smithery install brettscharm/elm-mcp
+curl -fsSL https://raw.githubusercontent.com/brettscharm/elm-mcp/main/install.sh | bash
 ```
 
-Smithery clones, configures, and registers the MCP with whatever AI host you have. You'll be prompted for `ELM_URL`, `ELM_USERNAME`, `ELM_PASSWORD`. Updates: `smithery update elm-mcp`.
+That command:
+1. Clones the repo to `~/.elm-mcp`
+2. Installs Python dependencies
+3. **Writes the correct MCP config to every AI host it detects** — including IBM Bob (`~/.bob/mcp_settings.json` + `.bob/mcp.json`), Claude Code, Cursor, VS Code, Windsurf
+4. Prompts for your ELM credentials (`ELM_URL`, `ELM_USERNAME`, `ELM_PASSWORD`)
+5. Launches the MCP server as a subprocess and verifies the handshake + 36-tool registration end-to-end
 
-### Option B — Manual clone + setup.py
+After it finishes, **restart your AI assistant** (full quit, not just close window). Then say:
+
+> *"Connect to ELM and list my projects."*
+
+Updates: re-run the same `curl ... | bash` command, or just talk to the AI: *"update yourself."* The server also auto-checks GitHub once a day on startup and silently pulls new versions.
+
+### Alternative — manual clone (for air-gapped / restricted environments)
+
+If you can't `curl | bash`:
 
 ```bash
-# 1. Get the code (one-time — never re-clone, just `git pull` to update)
 git clone https://github.com/brettscharm/elm-mcp.git
 cd elm-mcp
-
-# 2. Run setup. Installs deps, writes MCP config for every AI host
-#    detected (Claude Code, IBM Bob, VS Code, Cursor, Windsurf), prompts
-#    for ELM credentials, and ACTUALLY LAUNCHES the MCP server in a
-#    subprocess to verify the handshake + tool registration end-to-end.
 python3 setup.py
-
-# 3. Restart your AI assistant and say:
-#    "Connect to ELM and list my projects"
 ```
 
-`setup.py` is idempotent — re-run it any time (after switching AI tools, rotating your password, upgrading Python, etc.). It exits non-zero on any real failure so it's safe to wire into CI.
-
-**After first setup, restart your AI assistant** so it picks up the new MCP entry. Claude Code reads `~/.claude.json` and the project-local `.mcp.json` on each session start.
+`setup.py` does everything `install.sh` does except the clone. Idempotent — re-run any time.
 
 ### Verify it works any time
 
@@ -71,10 +73,83 @@ python3 setup.py --diagnose
 
 Skips installation and config writes. Just:
 1. Confirms the current Python can import every dependency
-2. Launches `doors_mcp_server.py` as a subprocess, runs the MCP `initialize` handshake, calls `tools/list`, asserts ≥1 tool registered (proves the server actually starts)
+2. Launches `doors_mcp_server.py` as a subprocess, runs the MCP `initialize` handshake, calls `tools/list`, asserts ≥1 tool registered
 3. Optionally exercises ELM auth if `.env` has credentials
 
 Use this when something feels off — server "not found" in your IDE, password rotated, Python upgraded, etc.
+
+---
+
+## For IBM Bob users — the manual JSON path
+
+`install.sh` and `setup.py` write Bob's config for you automatically. **You usually don't need to do this manually.** But if Bob's MCP integration isn't picking up the auto-generated config (some Bob versions in some IT environments lock down auto-write), here's the literal JSON to paste in yourself.
+
+**Step 1 — figure out two paths on your machine:**
+
+```bash
+which python3
+# → e.g. /opt/anaconda3/bin/python3   ← absolute path to YOUR Python
+
+ls ~/.elm-mcp/doors_mcp_server.py
+# → /Users/<you>/.elm-mcp/doors_mcp_server.py   ← absolute path to the server script
+```
+
+**Step 2 — open Bob's MCP config file** (create if missing):
+
+- **Global (covers every project):** `~/.bob/mcp_settings.json`
+- **Project-local (covers just this repo):** `<your-project>/.bob/mcp.json`
+
+Either works. Global is recommended unless your team needs the entry version-controlled with the project.
+
+**Step 3 — paste this in, replacing the two paths from step 1:**
+
+```json
+{
+  "mcpServers": {
+    "doors-next": {
+      "command": "<absolute path to python3 from step 1>",
+      "args": [
+        "<absolute path to doors_mcp_server.py from step 1>"
+      ],
+      "alwaysAllow": [
+        "connect_to_elm", "list_projects", "get_modules",
+        "get_module_requirements", "search_requirements",
+        "get_artifact_types", "get_link_types",
+        "get_attribute_definitions", "list_baselines",
+        "compare_baselines", "extract_pdf",
+        "list_global_configurations", "list_global_components",
+        "get_global_config_details", "query_work_items",
+        "scm_list_projects", "scm_list_changesets",
+        "scm_get_changeset", "scm_get_workitem_changesets",
+        "review_get", "review_list_open", "generate_chart",
+        "save_requirements"
+      ]
+    }
+  }
+}
+```
+
+**Step 4 — make sure your ELM credentials exist** at `~/.elm-mcp/.env` (or wherever your clone lives):
+
+```
+ELM_URL=https://your-elm-server.com
+ELM_USERNAME=your_username
+ELM_PASSWORD=your_password
+```
+
+`install.sh` and `setup.py` create this for you. To do it manually, copy `.env.example` → `.env` and fill in values.
+
+**Step 5 — fully quit Bob (Cmd+Q), reopen it, and say:**
+
+> *"List the MCP tools you have available."*
+
+Bob should enumerate 36 tools including `connect_to_elm`, `create_module`, `create_requirements`, etc. If it does, you're done — say *"connect to ELM and list my projects."*
+
+### What `alwaysAllow` does (Bob-specific)
+
+Each tool name in `alwaysAllow` is **pre-approved by you** — Bob runs it without asking permission per-call. The list above only includes **read-only tools** (list, get, query, search, etc.) plus chart rendering. Writes (`create_*`, `update_*`, `transition_*`, `create_link`, `create_baseline`) deliberately are NOT in the list, so Bob always asks before modifying anything in ELM.
+
+If you want even tighter control, remove tools from `alwaysAllow`. If you want zero pauses (e.g. building a demo where you don't want to keep clicking Approve), add the write tools too — but that's at your own risk.
 
 ---
 
@@ -82,15 +157,17 @@ Use this when something feels off — server "not found" in your IDE, password r
 
 This repo is the **hands**, not the brain. Same server works against any MCP-speaking host:
 
-| AI Assistant | Config file `setup.py` writes | Doc reference |
+| AI Assistant | Config file `install.sh` / `setup.py` writes | Doc reference |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` (user) + `.mcp.json` (project) | https://code.claude.com/docs/en/mcp |
 | **IBM Bob** | `~/.bob/mcp_settings.json` (user) + `.bob/mcp.json` (project) | https://bob.ibm.com/docs/ide/configuration/mcp/mcp-in-bob |
+| **Claude Code** | `~/.claude.json` (user) + `.mcp.json` (project) | https://code.claude.com/docs/en/mcp |
 | **VS Code** (Copilot) | `.vscode/mcp.json` (workspace) | https://code.visualstudio.com/docs/copilot/customization/mcp-servers |
 | **Cursor** | `.cursor/mcp.json` (workspace) + `~/.cursor/mcp.json` (user) | https://cursor.com/docs/context/mcp |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | https://docs.windsurf.com/windsurf/cascade/mcp |
 
-`setup.py` writes to every host it detects in one run. **For Bob specifically:** the read-only tools (list, get, query, search, etc.) are pre-approved via `alwaysAllow`, so Bob runs them without per-call permission prompts. Writes (create, update, transition, link) still ask for confirmation.
+`install.sh` writes to every host it detects in one run.
+
+> **Smithery note:** ELM MCP is also published at `brettscharmett/elm-mcp` on Smithery, but Smithery's CLI does NOT yet support IBM Bob (Bob isn't in their `--client` list). For Bob users, use `install.sh` above. Smithery is useful for non-Bob hosts: `smithery install brettscharmett/elm-mcp`.
 
 ---
 

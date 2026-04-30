@@ -6,11 +6,26 @@ This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — D
 
 ## First-Time Setup
 
-If the user says "connect to ELM" and the `doors-next` MCP server is NOT available, do NOT try to write MCP config files yourself. Tell the user:
+If the user says "connect to ELM" and the `doors-next` MCP server is NOT available, **do NOT try to write MCP config files yourself, do NOT open a browser to log into ELM, and do NOT write Python code to call ELM APIs directly.** None of those are correct. Tell the user this:
 
-> "Run `python3 setup.py` in the project directory. It installs deps, writes the MCP config for whichever AI tools you have (Claude Code / VS Code / Cursor / Windsurf), prompts for ELM credentials, and verifies the server starts end-to-end. Then restart your AI assistant."
+> "I don't see the ELM MCP server connected yet. Easiest fix is the one-line installer — run this in your terminal:
+>
+> ```
+> curl -fsSL https://raw.githubusercontent.com/brettscharm/elm-mcp/main/install.sh | bash
+> ```
+>
+> It installs to `~/.elm-mcp`, configures every AI host on your machine (including Bob's `~/.bob/mcp_settings.json`), and prompts for your ELM credentials. After it finishes, fully quit and reopen me, then ask me again."
 
-If they want to verify the server works without re-doing setup, tell them to run `python3 setup.py --diagnose` — it launches the MCP server in a subprocess, runs the protocol handshake, and confirms tools register.
+If they say they already installed it but I still don't see the tools, ask them to:
+
+1. **Quit and reopen the AI host** (Cmd+Q in macOS — full quit, not close window). MCP configs are read at host startup, not while it's running.
+2. If still not visible after restart, point them at the README's **"For IBM Bob users — the manual JSON path"** section, which has the exact `~/.bob/mcp_settings.json` content to paste in.
+
+To verify the server itself works (independent of any AI host) the user can run from a terminal:
+```
+cd ~/.elm-mcp && python3 setup.py --diagnose
+```
+That launches the MCP server in a subprocess, runs the protocol handshake, and prints whether all 36 tools register and ELM auth works.
 
 After the MCP server is available, proceed to the workflow below.
 
