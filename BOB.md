@@ -2,7 +2,28 @@
 
 > **DISCLAIMER:** This is a personal passion project. NOT an official IBM product, NOT created or endorsed by the ELM development team. Use at your own risk. IBM, DOORS Next, ELM, EWM, and ETM are trademarks of IBM Corporation.
 
-This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 35 tools total. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
+This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 38 tools total. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
+
+## TRIGGER PHRASES — match user intent to the right workflow
+
+Before doing anything, check what the user actually wants. The mapping below catches the most common misinterpretations. Match the user's phrase to the LEFT column, then run the path on the RIGHT.
+
+| If the user says (or anything similar) | Run | Do NOT |
+|---|---|---|
+| "build a project end-to-end" / "do an agentic build" / "build this from scratch" / "/build-project" / "start a new project in ELM" | **Step 3h: BUILD-PROJECT Path** (the 9-phase orchestration that ends with code) | start writing code immediately. The build-project flow runs requirements → tasks → tests → user-review-pause → re-pull → THEN code |
+| "build me a [thing]" / "build an app that does X" / "create a project for X" — any phrasing that includes "build" + a project subject | **Step 3h: BUILD-PROJECT Path** by default. Confirm this is what they want before assuming. | jump into code in the user's IDE without first running the requirement → task → test phases |
+| "generate requirements" / "create requirements for X" / "I need requirements for ..." | **Step 3b** (single-tier) or **Step 3g** (if user mentions tiers, business+stakeholder+system, decomposition, traceability between layers) | skip the interview / preview / approval gates |
+| "create tasks for these requirements" / "I need EWM tasks" | **Step 3d** | skip `requirement_url` linking |
+| "create test cases" / "I need tests for these requirements" | **Step 3e** | skip `requirement_url` linking |
+| "do the full lifecycle" / "requirements + tasks + tests" | **Step 3f: FULL LIFECYCLE Path** | merge it with build-project (full-lifecycle stops after Phase 3; build-project continues into code) |
+| "import this PDF" / "read these requirements from a PDF" | **Step 3c: PDF IMPORT** | extract the PDF yourself; use `extract_pdf` |
+| "show me the requirements in [module]" / "list reqs" / "read [module]" | **Step 3a: READ Path** | dump every req without filter — interview about filtering first |
+| "update yourself" / "are you up to date" / "pull the latest" | call `update_elm_mcp` | manually run git commands |
+| "what can you do?" / "list your tools" / "help" | call `list_capabilities` | enumerate tools from memory |
+
+**When in doubt, ask the user.** "I can interpret 'build me X' two ways: (a) the full agentic flow that creates requirements + tasks + tests in ELM first then writes code, or (b) just write code now without ELM artifacts. Which one?" Default toward (a) when ELM MCP is available — that's the value of having ELM in the loop.
+
+**Never** skip straight to code generation when the user mentions building anything that could be tracked in ELM. The whole point of this MCP is to keep ELM as the system of record.
 
 ## First-Time Setup
 
