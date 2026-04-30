@@ -692,8 +692,17 @@ If the user picks 1/2/3, run Step 3d / 3e against the System Requirements URLs f
 
 When the user says **"build a project"**, **"do an end-to-end build"**, **"agentic development"**, or invokes the `/build-project` prompt — run this 9-phase sequence. This is the headline demo: a one-line idea becomes fully-traced requirements + tasks + test cases in ELM, then the user reviews them in ELM, then the AI writes the actual code based on the finalized state.
 
+**How the gate is enforced — call the `build_project_next` tool between phases.**
+
+Don't run the phases from memory. The flow is server-driven via two tools:
+
+1. **`build_project(project_idea=<one-line idea>)`** — kicks the flow off. Returns Phase 0 + 1 instructions and tells you to call `build_project_next` after every phase.
+2. **`build_project_next(current_phase=<N>, user_signal=<verbatim user reply>)`** — the gate. After you finish Phase N, call this tool with the user's verbatim reply. The server validates the reply against an approval-words list and a rejection-words list. **It only returns Phase N+1's instructions if the user explicitly approved.** If `user_signal` is empty, vague, or non-approval, the tool refuses and tells you to wait for explicit approval — it doesn't auto-advance after a timeout, ever.
+
+This means: if you call `build_project_next(current_phase=2, user_signal="")`, you get back a refusal — not Phase 3. The gate is the only way forward.
+
 **Critical invariants for this path:**
-- Every phase has a user-approval gate. Don't skip gates.
+- Every phase has a user-approval gate enforced by `build_project_next`. Don't skip gates and don't simulate them.
 - After Phase 4, **STOP for user review in ELM**. Do NOT write code yet.
 - Phase 6 RE-PULLS state from ELM — code is built from current ELM state, not what was generated.
 - ELM is the system of record. Code references requirement IDs back to ELM.
@@ -793,6 +802,7 @@ Give the user a complete picture:
 - ❌ Forgetting to filter for `Status=Approved` in Phase 6 — drives the wrong code
 - ❌ Forgetting to transition tasks during Phase 7/8 — leaves ELM out of sync with what's actually built
 - ❌ Hiding URLs behind a generic `/rm` link — every artifact gets a markdown-link surface
+- ❌ Calling `build_project_next` with `user_signal=""` or paraphrased / inferred / "I think they meant yes" signals — pass the user's verbatim reply or the gate refuses
 
 ### After Any Path
 Ask: "Want to do anything else? I can read from another module, generate more requirements (single-tier or tiered), create tasks or test cases, or switch projects."

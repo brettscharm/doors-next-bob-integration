@@ -13,7 +13,7 @@
 
 ## What it does
 
-**35 MCP tools, 4 workflow prompts, 3 resource templates** — read and write across the full ELM stack from any MCP-speaking AI assistant (Claude Code, VS Code Bob/Copilot, Cursor, Windsurf, custom agents).
+**40 MCP tools, 5 workflow prompts, 3 resource templates** — read and write across the full ELM stack from any MCP-speaking AI assistant (IBM Bob, Claude Code, VS Code Copilot, Cursor, Windsurf, custom agents). Headline workflow: **`/build-project <one-line idea>`** generates Business → Stakeholder → System requirements (in modules), implementation tasks, test cases — all linked, with explicit user-approval gates between each phase — then writes the actual code based on the finalized ELM artifacts.
 
 | Domain | Read | Write | Query / Workflow |
 |---|---|---|---|
@@ -45,7 +45,7 @@ That command:
 2. Installs Python dependencies
 3. **Writes the correct MCP config to every AI host it detects** — including IBM Bob (`~/.bob/mcp_settings.json` + `.bob/mcp.json`), Claude Code, Cursor, VS Code, Windsurf
 4. Prompts for your ELM credentials (`ELM_URL`, `ELM_USERNAME`, `ELM_PASSWORD`)
-5. Launches the MCP server as a subprocess and verifies the handshake + 36-tool registration end-to-end
+5. Launches the MCP server as a subprocess and verifies the handshake + 40-tool registration end-to-end
 
 After it finishes, **restart your AI assistant** (full quit, not just close window). Then say:
 
@@ -82,7 +82,19 @@ Use this when something feels off — server "not found" in your IDE, password r
 
 ## For IBM Bob users — the manual JSON path
 
-`install.sh` and `setup.py` write Bob's config for you automatically. **You usually don't need to do this manually.** But if Bob's MCP integration isn't picking up the auto-generated config (some Bob versions in some IT environments lock down auto-write), here's the literal JSON to paste in yourself.
+`install.sh` and `setup.py` write Bob's config for you automatically. **You usually don't need to do this manually.** But if Bob's MCP integration isn't picking up the auto-generated config (some Bob versions in some IT environments lock down auto-write), you have two options.
+
+### Option A — one command prints the JSON, you paste it
+
+```bash
+python3 ~/.elm-mcp/setup.py --print-config
+```
+
+(Or `python3 setup.py --print-config` if you cloned manually.)
+
+That command prints a fully-resolved JSON block — Python path and server path filled in for **your** machine — ready to paste into `~/.bob/mcp_settings.json`. No manual `which python3` / `ls` ceremony. The same JSON works for Cursor / Windsurf / Claude Code (paste targets are listed in the command's output).
+
+### Option B — build the JSON by hand
 
 **Step 1 — figure out two paths on your machine:**
 
@@ -122,7 +134,7 @@ Either works. Global is recommended unless your team needs the entry version-con
         "scm_list_projects", "scm_list_changesets",
         "scm_get_changeset", "scm_get_workitem_changesets",
         "review_get", "review_list_open", "generate_chart",
-        "save_requirements"
+        "save_requirements", "list_capabilities"
       ]
     }
   }
@@ -143,7 +155,7 @@ ELM_PASSWORD=your_password
 
 > *"List the MCP tools you have available."*
 
-Bob should enumerate 36 tools including `connect_to_elm`, `create_module`, `create_requirements`, etc. If it does, you're done — say *"connect to ELM and list my projects."*
+Bob should enumerate 40 tools including `connect_to_elm`, `create_module`, `create_requirements`, `build_project`, etc. If it does, you're done — say *"connect to ELM and list my projects."*
 
 ### What `alwaysAllow` does (Bob-specific)
 
@@ -254,9 +266,9 @@ DNG renders the result in `jazz_rm:primaryText` (the rich-text body), not `dcter
 
 These are **server-side restrictions**, not bugs in this MCP:
 
-- **Adding requirements to a module's structure programmatically** is locked down on most ELM deployments. The standard OSLC PUT/PATCH pattern that works for every other write returns `400 "Content must be valid rdf+xml"` only when the change involves `oslc_rm:uses`. ReqIF import is the only documented path; not yet implemented in this MCP. Workaround: `create_module` + `create_requirements` produces the module + a folder of requirements, then drag them into the module in DNG UI. (Full investigation: [probe/MODULE_BINDING_FINDINGS.md](probe/MODULE_BINDING_FINDINGS.md).)
 - **Some ELM features depend on server version / feature flags** — DNG glossary, link validity, certain GCM operations may return 404 on older deployments.
 - **Permissions vary per project** — `setup.py --diagnose` confirms auth works, but write permissions are project-scoped in DNG/EWM/ETM. If a write fails with 403, it's a permission grant in your DNG admin, not a code bug.
+- **Module binding works** through DNG's Module Structure API (`<module>/structure`, gated by the `DoorsRP-Request-Type: public 2.0` header). The legacy `oslc_rm:uses` PUT route is locked down on most servers — calls to it surface a `PHASE_GATE` error. The Structure API path is what `create_requirements` (with `module_name`) and `add_to_module` use; see [probe/MODULE_BINDING_FINDINGS.md](probe/MODULE_BINDING_FINDINGS.md) for the full investigation.
 
 ---
 
@@ -269,7 +281,7 @@ These are **server-side restrictions**, not bugs in this MCP:
 | Connection test fails | The error tells you what's wrong (bad password, unreachable server, cert issue). Fix the one thing and re-run. |
 | EWM/ETM/DNG creation fails with 403 | Your account needs Create permission in that project. Open the project's admin → Permissions and grant your role write access. |
 | Requirements created but Primary Text is empty | Older artifacts only — this was a bug fixed Apr 2026. New requirements use `jazz_rm:primaryText` correctly. Re-run with the AI to recreate. |
-| "Module created but requirements aren't in it" | DNG locks `oslc_rm:uses` writes; see Known Limitations above. |
+| "Module created but requirements aren't in it" | Pass `module_name` to `create_requirements` so they auto-bind on creation, or call `add_to_module(module_url, [req_urls])` after the fact. Both use the DNG Structure API under the hood. |
 | Charts don't render in chat | Make sure your AI tool can display markdown images. Worst case, open the file directly — paths are printed. |
 
 ---
@@ -279,7 +291,7 @@ These are **server-side restrictions**, not bugs in this MCP:
 ```
 elm-mcp/
 ├── setup.py               # One-command installer + --diagnose flag
-├── doors_mcp_server.py    # MCP server (35 tools, 4 prompts, 3 resources)
+├── doors_mcp_server.py    # MCP server (40 tools, 5 prompts, 3 resources)
 ├── doors_client.py        # ELM REST client (DNG + EWM + ETM + GCM + SCM)
 ├── BOB.md                 # Instructions the AI reads automatically
 ├── CLAUDE.md              # Pointer to BOB.md for Claude Code
@@ -309,7 +321,7 @@ Copy-paste-ready blurb for Slack, email, or Teams:
 > ```
 > Restart your AI assistant, then ask it: *"Connect to ELM and list my projects."*
 >
-> 36 tools: read/write requirements (with rich text + tables + images), create modules with auto-bound requirements, transition work items, query and update across DNG/EWM/ETM, generate charts. Full details: https://github.com/brettscharm/elm-mcp
+> 40 tools: read/write requirements (with rich text + tables + images), create modules with auto-bound requirements, transition work items, query and update across DNG/EWM/ETM, generate charts — plus a one-line `/build-project` workflow that takes you from idea → tiered requirements → tasks → tests → code with phase-gated user approvals. Full details: https://github.com/brettscharm/elm-mcp
 >
 > ⚠️ Personal passion project — NOT an official IBM tool. Use at your own risk. Free for community use.
 

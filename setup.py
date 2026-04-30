@@ -688,6 +688,56 @@ def diagnose() -> int:
     return 0
 
 
+# ── --print-config mode ──────────────────────────────────────
+
+def print_config() -> int:
+    """Print the MCP server JSON for the user to copy-paste into Bob (or any
+    other AI host's MCP config). Outputs to stdout with both paths pre-filled
+    for the current machine. No installs, no prompts, no side effects."""
+    py_path = sys.executable
+    server_path = str((HERE / SERVER_SCRIPT).resolve())
+
+    # The standard "alwaysAllow" set — read-only tools that don't need
+    # per-call confirmation in Bob. Keep in sync with write_bob() above.
+    always_allow = [
+        "connect_to_elm", "list_projects", "get_modules",
+        "get_module_requirements", "save_requirements",
+        "search_requirements", "get_artifact_types", "get_link_types",
+        "get_attribute_definitions", "list_baselines",
+        "compare_baselines", "extract_pdf",
+        "list_global_configurations", "list_global_components",
+        "get_global_config_details", "query_work_items",
+        "scm_list_projects", "scm_list_changesets",
+        "scm_get_changeset", "scm_get_workitem_changesets",
+        "review_get", "review_list_open", "generate_chart",
+        "list_capabilities", "update_elm_mcp",
+    ]
+    config = {
+        "mcpServers": {
+            "doors-next": {
+                "command": py_path,
+                "args": [server_path],
+                "alwaysAllow": always_allow,
+            }
+        }
+    }
+
+    print(f"{BOLD}# ELM MCP — config for IBM Bob / Claude Code / Cursor / Windsurf{RESET}")
+    print(f"{DIM}# Copy the JSON below and paste into your AI host's MCP config file:{RESET}")
+    print(f"{DIM}#   IBM Bob:     ~/.bob/mcp_settings.json  (top-level key: mcpServers){RESET}")
+    print(f"{DIM}#   Claude Code: ~/.claude.json             (top-level key: mcpServers){RESET}")
+    print(f"{DIM}#   Cursor:      ~/.cursor/mcp.json         (top-level key: mcpServers){RESET}")
+    print(f"{DIM}#   Windsurf:    ~/.codeium/windsurf/mcp_config.json  (top-level key: mcpServers){RESET}")
+    print(f"{DIM}#   VS Code:     <project>/.vscode/mcp.json (use 'servers' instead of 'mcpServers',{RESET}")
+    print(f"{DIM}#                 and add type: 'stdio' inside the server entry){RESET}")
+    print()
+    import json as _json
+    print(_json.dumps(config, indent=2))
+    print()
+    print(f"{DIM}# Then fully quit and reopen your AI assistant for it to load the new MCP server.{RESET}")
+    return 0
+
+
 # ── main ─────────────────────────────────────────────────────
 
 def main() -> int:
@@ -698,10 +748,19 @@ def main() -> int:
         "--diagnose", action="store_true",
         help="Run smoke test only — don't install or write any config.",
     )
+    parser.add_argument(
+        "--print-config", action="store_true",
+        help="Print the MCP server JSON config (with absolute paths filled in) "
+             "for copy-paste into IBM Bob / Claude Code / VS Code / etc. Doesn't "
+             "install or change anything — pure stdout.",
+    )
     args = parser.parse_args()
 
     if args.diagnose:
         return diagnose()
+
+    if args.print_config:
+        return print_config()
 
     print(f"{BOLD}DOORS Next AI Agent — Setup{RESET}")
     print(f"{DIM}Project dir: {HERE}{RESET}")

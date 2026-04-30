@@ -80,6 +80,9 @@ probe/*.xml
 probe/oslc_*.json
 probe/scm_*.json
 
+# Auto-update throttle marker
+.last-update-check
+
 # Exploration/test output files
 *_exploration.txt
 *_edge_cases.txt

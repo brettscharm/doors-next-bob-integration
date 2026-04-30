@@ -74,7 +74,7 @@ load_dotenv()
 # decide if a newer GitHub release exists; the `connect_to_elm`
 # response also surfaces it so users always know what version they're
 # running.
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 GITHUB_REPO = "brettscharm/elm-mcp"
 
 app = Server("doors-next-server")
@@ -874,6 +874,40 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["project_idea"]
+            }
+        ),
+        Tool(
+            name="build_project_next",
+            description=(
+                "🚦 PHASE GATE for the build_project flow. After completing a phase "
+                "(showing the user the preview, getting their response), call this "
+                "tool to receive the NEXT phase's instructions. The tool refuses to "
+                "advance unless `user_signal` contains an explicit approval like "
+                "'yes', 'go ahead', 'approved', 'ship it', 'continue', 'push them'. "
+                "An empty or fake user_signal returns an error and the flow stalls "
+                "— that's the point. This is the lock that prevents Bob from "
+                "advancing phases without real user consent. Pass the user's "
+                "actual reply text, not a paraphrase."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_phase": {
+                        "type": "integer",
+                        "description": "The phase number you JUST finished (0–8). build_project_next will return the instructions for phase current_phase + 1.",
+                        "minimum": 0,
+                        "maximum": 8
+                    },
+                    "user_signal": {
+                        "type": "string",
+                        "description": "VERBATIM text of what the user typed in response to your phase preview. Must contain explicit approval ('yes' / 'go ahead' / 'approved' / 'ship it' / 'continue' / 'push them' / 'do it' / 'looks good'). The tool validates this — empty or generic non-approval text gets an error and you must wait. Do not paraphrase, do not assume, do not fake."
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional: brief context the next phase should know about (e.g. project URLs returned in the prior phase, the user's specific changes to your preview). The next-phase script will reference this back."
+                    }
+                },
+                "required": ["current_phase", "user_signal"]
             }
         ),
         Tool(
@@ -1926,6 +1960,228 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             return [TextContent(type="text", text=_maybe_append_update_notice(body))]
 
         # ── update_elm_mcp (no ELM connection needed) ─────────
+        if name == "build_project_next":
+            current_phase = arguments.get("current_phase")
+            user_signal = (arguments.get("user_signal") or "").strip()
+            context = (arguments.get("context") or "").strip()
+
+            if current_phase is None or not isinstance(current_phase, int) or current_phase < 0 or current_phase > 8:
+                return [TextContent(type="text", text=(
+                    "Error: current_phase is required and must be an integer 0–8. "
+                    "Pass the phase number you JUST finished (e.g. current_phase=2 "
+                    "means you finished Phase 2 and are asking for Phase 3)."
+                ))]
+
+            # Approval-signal validation. We accept "yes"/"go ahead"/etc. (1+ word
+            # approvals) AND longer messages that include those tokens. We REJECT:
+            # empty, just whitespace, or a clear non-approval ("no", "stop",
+            # "wait", "not yet", "let me think").
+            approval_words = {
+                "yes", "yeah", "yep", "yup", "go", "ahead", "approved", "approve",
+                "ship", "push", "continue", "proceed", "do", "ok", "okay", "good",
+                "looks", "perfect", "great", "alright", "lgtm", "build", "pull",
+            }
+            rejection_words = {
+                "no", "stop", "wait", "hold", "cancel", "abort", "reject",
+                "not yet", "don't", "dont", "skip",
+            }
+            signal_lower = user_signal.lower()
+            signal_tokens = set(t.strip(".,!?;:") for t in signal_lower.split())
+
+            if not user_signal:
+                return [TextContent(type="text", text=(
+                    "🚦 GATE LOCKED — user_signal is empty.\n\n"
+                    "You cannot advance to the next phase without the user's "
+                    "verbatim approval text. Go back to the user, show them the "
+                    "preview again, ask explicitly *'should I push these to ELM "
+                    "and continue?'*, and only call build_project_next once they "
+                    "actually reply with approval. The user merely being silent, "
+                    "or you assuming they're satisfied, does NOT count."
+                ))]
+
+            # Check for explicit rejection first (don't auto-advance on a "no")
+            if any(rw in signal_lower for rw in rejection_words) and not any(aw in signal_tokens for aw in approval_words):
+                return [TextContent(type="text", text=(
+                    f"🚦 GATE LOCKED — user said something that looks like a "
+                    f"REJECTION, not an approval.\n\n"
+                    f"You sent: \"{user_signal}\"\n\n"
+                    f"That doesn't read as approval. The user may want changes, may "
+                    f"want to stop, or may be asking a question. Address what they "
+                    f"actually said — don't try to advance. If they want changes, "
+                    f"revise the preview and re-show it, then ask again. If they "
+                    f"want to stop the build, acknowledge and end."
+                ))]
+
+            # Require at least one explicit approval token. A bare "ok" qualifies
+            # but we surface what we matched so the user knows what we accepted.
+            matched = signal_tokens & approval_words
+            if not matched:
+                return [TextContent(type="text", text=(
+                    f"🚦 GATE LOCKED — user_signal doesn't contain explicit approval.\n\n"
+                    f"You sent: \"{user_signal}\"\n\n"
+                    f"This needs to contain a clear approval word: yes / go ahead / "
+                    f"approved / continue / ship it / push them / looks good / etc.\n\n"
+                    f"If the user is asking a question or requesting changes, that's "
+                    f"NOT approval — handle their request first, then re-ask. If "
+                    f"they truly approved but used unusual phrasing, ask them to "
+                    f"confirm with 'yes' before calling this tool."
+                ))]
+
+            next_phase = current_phase + 1
+            ctx_block = f"\n\n**Context from prior phase:** {context}" if context else ""
+            ack = (f"✓ Phase {current_phase} approved (matched on: "
+                   f"{', '.join(sorted(matched))}). Advancing to Phase {next_phase}.")
+
+            phase_scripts = {
+                1: ("PHASE 1 — PROJECT INTAKE INTERVIEW",
+                    "Ask the user 4–6 short questions, ONE AT A TIME. Wait for each "
+                    "answer before the next:\n\n"
+                    "  1. One-paragraph description of what the user does with this "
+                    "thing\n"
+                    "  2. Tech stack / platform (web app? embedded? API service? mobile?)\n"
+                    "  3. Standards or compliance (DO-178C / ISO 26262 / NIST / none)\n"
+                    "  4. Approximate scale (5–10 reqs / 15–25 / 30+)\n"
+                    "  5. Integrations or external interfaces?\n"
+                    "  6. Anything specific that MUST or MUST NOT be included?\n\n"
+                    "After answers, confirm a one-line scope back to the user. When "
+                    "they say 'yes that's right', call `build_project_next("
+                    "current_phase=1, user_signal=<their actual reply>)` to advance "
+                    "to Phase 2."),
+                2: ("PHASE 2 — REQUIREMENTS (DNG)",
+                    "Run BOB.md Step 3b (single-tier) or Step 3g (tiered) per the "
+                    "tier_mode you started with. Generate internally → preview-with-"
+                    "module-structure (table of all reqs grouped by proposed module "
+                    "with rationale per group) → wait for explicit user approval → "
+                    "call create_requirements with module_name set so reqs auto-bind. "
+                    "Surface module + every requirement URL as markdown links.\n\n"
+                    "Server-side validation rejects bodies containing 'Acceptance "
+                    "Criteria', 'Business Value', 'Stakeholder Need', 'Test Steps' "
+                    "headers — those go in test cases (Phase 4) or higher tiers. Each "
+                    "requirement = one 'shall' statement, optionally with a "
+                    "'Rationale:' line.\n\n"
+                    "After requirements are pushed, call `build_project_next("
+                    "current_phase=2, user_signal=<user's approval text>, "
+                    "context='<comma-separated requirement URLs>')`."),
+                3: ("PHASE 3 — IMPLEMENTATION TASKS (EWM)",
+                    "Run BOB.md Step 3d. One EWM Task per System Requirement (skip "
+                    "Business/Stakeholder tiers if tiered). Verb-first titles. Brief "
+                    "task body — Objective + Deliverables + Dependencies. Don't copy "
+                    "the requirement body — it's already linked. Preview → user "
+                    "approval → create_task per task with requirement_url set "
+                    "verbatim from the requirement URL.\n\n"
+                    "After tasks are pushed, call `build_project_next("
+                    "current_phase=3, user_signal=<user's reply>, "
+                    "context='<task URLs>')`."),
+                4: ("PHASE 4 — TEST CASES (ETM)",
+                    "Run BOB.md Step 3e. One Test Case per System Requirement, with "
+                    "full Preconditions / Test Steps / Pass-Fail Criteria — these DO "
+                    "belong in test cases. Optionally also create_test_script for "
+                    "detailed numbered procedures linked via test_case_url. Preview "
+                    "→ user approval → push linked.\n\n"
+                    "After tests are pushed, call `build_project_next("
+                    "current_phase=4, user_signal=<user's reply>, "
+                    "context='<test case URLs>')`."),
+                5: ("PHASE 5 — STOP. USER REVIEWS IN ELM.",
+                    "**This is the most important gate. Do NOT write any code yet.**\n\n"
+                    "Tell the user verbatim:\n\n"
+                    "> 'Phases 2–4 are complete. Open ELM and review:\n"
+                    "> - DNG modules: <markdown links>\n"
+                    "> - EWM tasks: <markdown links>\n"
+                    "> - ETM test cases: <markdown links>\n"
+                    ">\n"
+                    "> In ELM you can: approve / reject / modify any artifact, mark "
+                    "requirement statuses (only Approved reqs drive the code in "
+                    "Phase 7), reassign tasks, rewrite tests, add or drop anything.\n"
+                    ">\n"
+                    "> When you\\'re done — come back and say *continue* / *build it* "
+                    "/ *pull latest*. I\\'ll re-fetch the current ELM state and start "
+                    "writing the actual app code.'\n\n"
+                    "Then **wait silently**. Do NOT poll, do NOT advance to Phase 6 "
+                    "until the user explicitly says continue. They may take 5 "
+                    "minutes, 5 hours, or 5 days — that's fine.\n\n"
+                    "When they signal continue, call `build_project_next("
+                    "current_phase=5, user_signal=<their reply>)`."),
+                6: ("PHASE 6 — RE-PULL CURRENT ELM STATE",
+                    "User has reviewed in ELM and signaled continue. NOW:\n\n"
+                    "  1. Call get_attribute_definitions on the DNG project to "
+                    "discover the project's actual 'approved' status value (don't "
+                    "guess — different projects use 'Approved', 'Accepted', 'Ready', "
+                    "etc.).\n"
+                    "  2. get_module_requirements on the System Requirements module "
+                    "with filter={\"Status\": \"<Approved value>\"}.\n"
+                    "  3. query_work_items for active EWM tasks (oslc.where=oslc_cm:"
+                    "closed=false).\n"
+                    "  4. Re-fetch test cases (or filter by validatesRequirement to "
+                    "the requirement URLs).\n"
+                    "  5. Show user a current-state summary: 'You have N approved "
+                    "reqs (was M originally), K active tasks, J test cases. Building "
+                    "based on this. OK?'\n\n"
+                    "When user confirms, call `build_project_next(current_phase=6, "
+                    "user_signal=<reply>, context='<final lists of approved reqs, "
+                    "active tasks, tests>')`."),
+                7: ("PHASE 7 — WRITE THE CODE",
+                    "User approved Phase 6's current state. NOW write the actual "
+                    "application code in the user's IDE using the AI host's "
+                    "editing capabilities.\n\n"
+                    "Every file gets a header comment listing the requirement IDs "
+                    "it implements:\n"
+                    "```\n"
+                    "# Implements: REQ-005, REQ-007\n"
+                    "# Source: <DNG req URLs>\n"
+                    "```\n"
+                    "Code structure should mirror requirement structure where "
+                    "reasonable.\n\n"
+                    "When code is written and the user has had a chance to inspect, "
+                    "ask if they want to advance to Phase 8 (track work + record "
+                    "test results in ELM). On approval, call build_project_next("
+                    "current_phase=7, user_signal=<reply>, context='<files written, "
+                    "key reqs implemented>')."),
+                8: ("PHASE 8 — TRACK WORK + RECORD RESULTS",
+                    "Walk through each task and test:\n"
+                    "  - As each task is implemented: transition_work_item("
+                    "workitem_url, 'In Development') when starting, "
+                    "transition_work_item(... 'Resolved') when complete.\n"
+                    "  - For each test case once code is in place:\n"
+                    "    * passes → create_test_result(test_case_url, "
+                    "status='passed')\n"
+                    "    * fails → create_test_result(... status='failed') AND "
+                    "interview the user briefly about the failure (steps, expected "
+                    "vs actual, severity), then create_defect linked to the "
+                    "requirement and test case URLs.\n\n"
+                    "When all tasks/tests are walked, call build_project_next("
+                    "current_phase=8, user_signal=<reply>) for the final summary."),
+                9: ("PHASE 9 — FINAL SUMMARY",
+                    "Build complete. Give the user a complete picture using markdown "
+                    "links:\n\n"
+                    "  - DNG: [Module name](url) — N reqs ({M} Approved, {K} "
+                    "Rejected)\n"
+                    "  - EWM: {N} tasks total — {M} Resolved, {K} In Progress, {J} "
+                    "blocked\n"
+                    "  - ETM: {N} tests — {M} passed ✅, {K} failed ❌, {J} blocked\n"
+                    "  - Defects: [open defect list](url) — {N} open, all linked "
+                    "back to source reqs\n"
+                    "  - Code: {F} files written, every file has 'Implements REQ-…' "
+                    "headers\n\n"
+                    "End with: 'The complete trace is in ELM: requirement → task → "
+                    "test → result → defect-if-any. Click any link above to "
+                    "inspect.'\n\n"
+                    "🎬 BUILD COMPLETE. Do not call build_project_next again."),
+            }
+
+            if next_phase not in phase_scripts:
+                # next_phase == 9 means user just signaled approval after Phase 8
+                if next_phase == 9:
+                    title, body = phase_scripts[9]
+                    return [TextContent(type="text", text=f"{ack}\n\n## {title}\n\n{body}{ctx_block}")]
+                return [TextContent(type="text", text=(
+                    f"{ack}\n\nThere is no Phase {next_phase}. The build flow ends "
+                    f"at Phase 9 (final summary). If you finished Phase 9, the "
+                    f"build is complete — do not call this tool again."
+                ))]
+
+            title, body = phase_scripts[next_phase]
+            return [TextContent(type="text", text=f"{ack}\n\n## {title}\n\n{body}{ctx_block}")]
+
         if name == "build_project":
             idea = (arguments.get("project_idea") or "").strip()
             if not idea:
@@ -2058,6 +2314,19 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 f"**START NOW with Phase 0.** Call `connect_to_elm` if not connected. "
                 f"Then ask the user to confirm/specify the DNG / EWM / ETM project names "
                 f"if not already set above. Then move to Phase 1's intake questions.\n\n"
+                f"## 🚦 PHASE GATE TOOL — `build_project_next`\n\n"
+                f"You CANNOT advance from one phase to the next on your own. After "
+                f"each phase's user-approval moment, you MUST call "
+                f"`build_project_next(current_phase=<N>, user_signal=<verbatim user "
+                f"reply>)` to receive the next phase's instructions. The tool "
+                f"validates the user_signal — empty / vague / non-approval text "
+                f"returns an error and the flow stalls. **This is the only path "
+                f"to the next phase.** If you skip ahead without calling "
+                f"build_project_next you will be operating on Phase {{N}}'s rules "
+                f"forever — no Phase {{N+1}} script will be available to you.\n\n"
+                f"After Phase 0 (connection + project selection), call "
+                f"`build_project_next(current_phase=0, user_signal=<user said the "
+                f"projects to use>)` to get Phase 1's interview questions.\n\n"
                 f"**REMINDER:** the WRITE GATE rule applies to every create_* / update_* "
                 f"/ transition_* call inside this flow. Per-phase user approval is "
                 f"non-negotiable. The user merely saying 'build a project' was the "
@@ -3690,7 +3959,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 # ── Main ──────────────────────────────────────────────────────
 
 async def main():
-    logger.info("IBM ELM MCP Server starting (33 tools, 4 prompts, 3 resource templates)")
+    logger.info(f"IBM ELM MCP Server v{__version__} starting (40 tools, 5 prompts, 3 resource templates)")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
 
