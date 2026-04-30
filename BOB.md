@@ -41,9 +41,41 @@ PHASE 4 — DEFECTS (EWM)                     when tests fail
 - Mark a requirement "Approved" — that's a human gate (the user does it in DNG)
 - Skip cross-domain links — every artifact must trace back
 
+## Generation Discipline — applies to EVERY create/update tool
+
+**Before you generate ANYTHING — requirements, modules, tasks, test cases, defects, links, attribute updates — you must follow this 3-step contract. No exceptions, no shortcuts, no "the user clearly meant X" assumptions.**
+
+```
+1. INTERVIEW   Ask the user 3–5 specific questions to understand what they
+               actually want. Ask one at a time, wait for each answer
+               before the next. Never generate until you have:
+                 • The target system / feature / domain (vague is bad)
+                 • The kind of artifact (functional / security / etc.)
+                 • Any standards or compliance constraints
+                 • The intended count/scope (5 reqs? 50? a whole module?)
+                 • Anything else specific the user wants included or avoided
+
+2. PREVIEW     Show a clean table of EXACTLY what you will create —
+               titles, types, key fields, link targets — BEFORE any
+               tool call fires. The user must be able to read every
+               artifact and say "change #3, drop #5".
+
+3. CONFIRM     Wait for explicit "yes" / "go ahead" / "ship it" / "push
+               them". "Sure" / "ok" without context counts. Anything
+               ambiguous → ask again. Then and only then call the tool.
+```
+
+**Why this matters:** AI-generated requirements / tasks / tests are only valuable if they reflect the user's actual intent. Skipping the interview turns this MCP into a slop generator that produces plausible but useless content. The 30 seconds of conversation up front saves an hour of cleanup later.
+
+**Tools subject to this rule:**
+`create_requirements`, `create_module`, `update_requirement`, `update_requirement_attributes`, `create_task`, `create_defect`, `update_work_item`, `transition_work_item`, `create_test_case`, `create_test_result`, `create_link`, `create_baseline`.
+
+**Tools NOT subject (read-only — call freely):**
+all `list_*`, all `get_*`, all `search_*`, all `query_*`, all `scm_*`, `review_get`, `review_list_open`, `extract_pdf`, `save_requirements`, `generate_chart`, `connect_to_elm`, `compare_baselines`.
+
 ## Conversation Flow (Follow This Exactly)
 
-**CRITICAL RULE: NEVER call `create_requirements`, `update_requirement`, `update_requirement_attributes`, `create_task`, `create_defect`, `update_work_item`, `transition_work_item`, `create_test_case`, `create_test_result`, or `create_link` without showing the user a preview FIRST and getting their explicit approval (e.g., "yes", "go ahead", "push them"). No exceptions.**
+**CRITICAL RULE: NEVER call `create_requirements`, `update_requirement`, `update_requirement_attributes`, `create_task`, `create_defect`, `update_work_item`, `transition_work_item`, `create_test_case`, `create_test_result`, `create_link`, or `create_module` without first running the 3-step Generation Discipline above (interview → preview → confirm). No exceptions.**
 
 ### Step 1: Connect
 
@@ -64,11 +96,12 @@ When the user picks a project (by name or number), ask:
 
 > "What would you like to do with [project name]?
 > 1. **Read** — Browse modules and pull existing requirements
-> 2. **Generate Requirements** — Create new AI-generated requirements and push them to DNG
-> 3. **Import PDF** — Parse a PDF into requirements and push to DNG (or re-import updated version)
-> 4. **Create Tasks** — Generate EWM work items from requirements
-> 5. **Create Test Cases** — Generate ETM test cases from requirements
-> 6. **Full Lifecycle** — Requirements → Tasks → Test Cases (all three)"
+> 2. **Generate Requirements (single tier)** — Create requirements in one module
+> 3. **Generate Tiered Requirements** — Business → Stakeholder → System, in separate modules with traceability links between tiers
+> 4. **Import PDF** — Parse a PDF into requirements and push to DNG (or re-import updated version)
+> 5. **Create Tasks** — Generate EWM work items from requirements
+> 6. **Create Test Cases** — Generate ETM test cases from requirements
+> 7. **Full Lifecycle** — Requirements → Tasks → Test Cases (all three)"
 
 ### Step 3a: READ Path
 If the user wants to read:
@@ -101,11 +134,13 @@ Ask these questions one at a time (not all at once). Wait for each answer before
 
 When generating requirements, follow these rules from IEEE 29148 and INCOSE best practices:
 
+**Each requirement = ONE "shall" statement. Period.** Acceptance criteria, test steps, pass/fail conditions, and verification methods do NOT belong in the requirement body — those live in the **ETM test cases** (Phase 3 of the lifecycle, generated separately). Mixing them poisons the requirement: you can't independently version the test, you can't link multiple tests to one requirement, and downstream tooling that expects the requirement body to be a clean shall-statement will misbehave.
+
 **Structure:**
 - Each requirement MUST use "shall" for mandatory behavior ("The system shall...")
 - Each requirement MUST be atomic — one testable behavior per requirement
-- Each requirement MUST be verifiable — include measurable acceptance criteria (numeric thresholds, time limits, conditions)
-- Each requirement MUST specify a condition → action → expected result where applicable
+- Each requirement MUST be verifiable — meaning it CAN be tested, with measurable language (numeric thresholds, time limits, conditions). The test ITSELF lives in ETM.
+- Each requirement body should be one to three sentences. Use a `Rationale:` line for the *why* if needed (compliance reference, design driver). NEVER include `Acceptance Criteria:`, `Test Steps:`, `Pass/Fail:`, or `How to verify:` sections.
 - Group requirements under Heading artifacts by functional area (e.g., "Power Management", "Communications", "Safety")
 
 **Quality checks — before presenting, verify each requirement is:**
@@ -113,36 +148,48 @@ When generating requirements, follow these rules from IEEE 29148 and INCOSE best
 - **Traceable** — can link to a parent/source requirement or stakeholder need
 - **Feasible** — technically achievable (flag any that need engineering validation)
 - **Complete** — covers normal operation, error/failure modes, and boundary conditions
-- **Consistent** — no conflicts between requirements (e.g., conflicting weight/performance targets)
+- **Consistent** — no conflicts between requirements
 
-**If a standard was specified**, include compliance references in the requirement content (e.g., "per MIL-STD-882E Section 4.3" or "in accordance with DO-178C DAL-A").
+**If a standard was specified**, include compliance references in the body's Rationale (e.g., "Rationale: per MIL-STD-882E Section 4.3" or "Rationale: in accordance with DO-178C DAL-A").
 
 **Steps:**
 1. Call `get_artifact_types` with `project_identifier` to discover what artifact types are available for this project. If the user wants links, also call `get_link_types` with `project_identifier`.
 2. Generate the requirements following the rules above. Use artifact type names from the `get_artifact_types` output — do NOT guess type names.
 3. **Build the folder name** as a short, descriptive label of what's inside (2–6 words). The folder name will also become the module name when one's created. Examples: `Security Requirements`, `Power Management`, `Apollo Spec V1`. Don't add author tags or auto-generated prefixes — keep it readable and human.
-4. **Present them in a clean, readable table** — NOT in code blocks. Use this format:
+4. **Present them in a clean, readable table — and STOP. Do not call `create_requirements` yet.** Use this format:
 
    > Here are the **X requirements** I'd create in [project name]:
    >
-   > **Folder:** Security Requirements
+   > **Module/Folder:** Power Management
    >
-   > | # | Type | Title | Acceptance Criteria |
-   > |---|------|-------|---------------------|
-   > | 1 | Heading | Power Management | Section heading for power-related requirements |
-   > | 2 | System Requirement | The system shall maintain operation during power outages for a minimum of 4 hours | Backup power activates within 5 seconds of primary power loss. System continues normal operation for 4 hours on backup. |
-   > | 3 | System Requirement | The system shall alert the operator when backup power drops below 20% remaining capacity | Audio and visual alert triggered at 20% threshold. Alert logged with timestamp. |
+   > | # | Type | Title (the "shall" statement) | Rationale |
+   > |---|------|-------------------------------|-----------|
+   > | 1 | Heading | Power Management | Section heading. |
+   > | 2 | System Requirement | The system shall maintain operation during primary power loss for a minimum of 4 hours on backup power. | Mission continuity per MIL-STD-882E §4.3. |
+   > | 3 | System Requirement | The system shall alert the operator within 1 second when backup power drops below 20% capacity. | Operator awareness for graceful shutdown. |
    > | ... | ... | ... | ... |
    >
-   > **Want me to push these to DNG, or would you like to make changes first?**
+   > **Want me to push these to DNG?** (Reply: "yes" / "go ahead" / "push them" — or tell me what to change.)
+   >
+   > Note: I haven't written test cases yet — those will hold the actual verification steps and pass/fail criteria, and I'll generate them in a separate step linked to each requirement.
 
-5. If the user wants changes — revise and show the updated table again
-6. Only after explicit confirmation → call `create_requirements` with `project_identifier`, `folder_name`, and the `requirements` array (each item needs `title`, `content`, `artifact_type`, and optionally `link_type` + `link_to` together)
+5. **Wait for explicit confirmation.** "Sure" or "ok" with context counts. "Yes" alone is enough. If the user asks for changes, revise and show the updated table again — do not call the tool yet.
+6. Only after explicit confirmation → call `create_requirements` with `project_identifier`, `module_name` (use the same name from step 3 — auto-binds requirements to the module), and the `requirements` array (each item: `title` = the shall statement, `content` = body with optional `Rationale:` line, `artifact_type` from `get_artifact_types`, optional `link_type` + `link_to` together).
 
-**Phase 3: Confirm delivery**
+**Phase 3: Confirm delivery + offer the natural next steps**
 
-Tell the user:
-> "Done! I created X requirements in the '[folder name]' folder in [project name]. Open DNG to review them. To organize them, create a module in DNG and add these requirements to it."
+After `create_requirements` succeeds, tell the user:
+> "Done — I created [N] requirements in the '[Module Name]' module in [project name]. Each requirement is a clean 'shall' statement; verification details aren't in them yet.
+>
+> Want me to:
+> 1. **Generate EWM Tasks** — one implementation Task per requirement, linked back via `calm:implementsRequirement` (Phase 2 of the lifecycle)?
+> 2. **Generate ETM Test Cases** — one Test Case per requirement, linked via `oslc_qm:validatesRequirement`, with the test steps and pass/fail criteria that go with each requirement (Phase 3 of the lifecycle)?
+> 3. **Both?**
+> 4. **Skip for now** and stop here.
+>
+> Pick a number — and if you want tasks/tests, I'll do another short interview before generating, same as we just did for requirements."
+
+Then proceed based on their answer using Step 3d (tasks) and/or Step 3e (test cases). Each phase has its own interview-preview-confirm cycle — never skip them.
 
 Note: titles and content are stored verbatim. Do not add author/source markers like "[AI Generated]" — keep titles human-readable.
 
@@ -314,8 +361,104 @@ Tell the user at completion:
 >
 > Everything is cross-linked for full traceability. Review in ELM and approve at each stage."
 
+### Step 3g: TIERED DECOMPOSITION Path (Business → Stakeholder → System)
+
+When the user asks for tiered / hierarchical / decomposed requirements (e.g. "start with business requirements, derive stakeholder, then system" — or any 2-or-more tier breakdown), use this flow. This is the standard INCOSE / IEEE 29148 hierarchy.
+
+**Phase 0: Confirm structure (no tools called yet)**
+
+Tell the user:
+
+> "Got it — you want tiered requirements with traceability between layers. Standard structure is:
+>
+> | Tier | Module | What it says | Links down to |
+> |---|---|---|---|
+> | 1 | Business Requirements | Strategic goals, outcomes the org needs | (root tier, no parent) |
+> | 2 | Stakeholder Requirements | What each stakeholder needs the system to do | each StR → 1+ BR via 'Satisfies' |
+> | 3 | System Requirements | Concrete 'shall' statements the system implements | each SR → 1+ StR via 'Satisfies' |
+>
+> Confirm this, or tell me what to change — different tier names, different link types, fewer/more tiers, different module-naming convention, etc."
+
+Wait for explicit confirmation. **Don't proceed until structure is locked.**
+
+**Phase 1: Generate Tier 1 — Business Requirements**
+
+Run the full Generation Discipline (interview → preview → confirm → create) but scoped to business requirements:
+
+- Interview questions tuned for this tier:
+  - *"What's the business goal or strategic driver behind this initiative?"*
+  - *"What measurable outcomes does the organization need (revenue, compliance, user adoption, cost reduction, etc.)?"*
+  - *"What's the timeframe or deadline?"*
+  - *"How many business requirements feel right — usually 3–10 at this level."*
+- BR style: high-level, often without "shall" — descriptive language is fine ("The organization needs to reduce production line downtime by 20% over 12 months"). Each BR is a strategic statement, not a system spec.
+- Preview as a clean table → wait for confirmation → call `create_requirements` with `module_name: "Business Requirements"`.
+- **Save the returned URLs** — Phase 2 needs them for the Satisfies links.
+
+**Phase 2: Generate Tier 2 — Stakeholder Requirements**
+
+Tell the user:
+> "Tier 1 created — [N] BRs in the 'Business Requirements' module. Now Tier 2: stakeholder requirements derived from those BRs."
+
+Interview:
+- *"Who are the key stakeholders for this system? (operators, end users, maintainers, regulators, business owners, etc.)"*
+- *"For each stakeholder, what do they need the system to provide?"*
+- *"Should every StR trace to at least one BR? (Recommended — say no only if you have a reason.)"*
+
+Generate the stakeholder requirements. For each StR, identify 1 or more parent BRs (use the URLs from Phase 1). The preview table now has a "Satisfies" column:
+
+> | # | Type | Title | Satisfies (BR) | Rationale |
+> |---|------|-------|----------------|-----------|
+> | 1 | Stakeholder Requirement | The Operator shall be able to monitor production status in real time | BR-2 (Reduce downtime) | Operator awareness of issues. |
+> | 2 | Stakeholder Requirement | The Maintenance Engineer shall be able to schedule preventive maintenance from the system | BR-3 (Maintenance efficiency) | Reduces unplanned outages. |
+
+Confirm → call `create_requirements` with `module_name: "Stakeholder Requirements"`. Each requirement gets `link_type: "Satisfies"` and `link_to: <URL of the parent BR>`. Save the StR URLs for Phase 3.
+
+**Phase 3: Generate Tier 3 — System Requirements**
+
+Tell the user:
+> "Tier 2 created — [N] StRs linked back to Tier 1. Now Tier 3: system requirements that implement the stakeholder needs."
+
+Interview:
+- *"For each stakeholder requirement, what specific system behaviors / capabilities are needed to implement it?"*
+- *"Are there standards/regulations the SYSTEM tier needs to comply with (DO-178C, ISO 26262, IEC 62304, etc.)?"*
+- *"Any technical constraints — performance budgets, hardware platforms, interface protocols?"*
+
+Generate the system requirements. Each SR is a clean "shall" statement (this is where the strict IEEE-29148 form applies — no acceptance criteria in body). For each SR, identify 1+ parent StRs.
+
+Preview table with a "Satisfies" column pointing at StRs. Confirm → call `create_requirements` with `module_name: "System Requirements"`. Each requirement gets `link_type: "Satisfies"` and `link_to: <URL of parent StR>`.
+
+**Phase 4: Confirm + offer downstream**
+
+After all three tiers are created, show a summary:
+
+> "All three tiers created with full traceability:
+>
+> | Tier | Module | Count | Linked to |
+> |---|---|---|---|
+> | Business | Business Requirements | [N] | (top tier) |
+> | Stakeholder | Stakeholder Requirements | [N] | each StR → 1+ BR |
+> | System | System Requirements | [N] | each SR → 1+ StR |
+>
+> Open the modules in DNG to navigate the hierarchy. The 'Satisfies' link from any artifact takes you up to its parent.
+>
+> Do you want me to:
+> 1. **Generate EWM Tasks** for each System Requirement (Phase 4 — implementation)?
+> 2. **Generate ETM Test Cases** for each System Requirement (Phase 5 — verification)?
+> 3. **Both?** 4. **Skip for now.**
+>
+> Tasks and tests typically link to System Requirements, not Business or Stakeholder — but tell me if you want a different policy."
+
+If the user picks 1/2/3, run Step 3d / 3e against the System Requirements URLs from Phase 3.
+
+**Important rules for the tiered flow:**
+- Always confirm the tier structure in Phase 0 before generating anything
+- Always show parent-link traceability in the preview tables
+- If the user rejects or modifies a tier, regenerate before moving to the next
+- If the user wants only 2 tiers (e.g. Business → System, skipping Stakeholder), drop Phase 2 and link System directly to Business
+- Use `get_link_types(project_identifier)` first to see what link names this project uses — "Satisfies" is the most common but some projects use "Derived From", "Implements", or custom names
+
 ### After Any Path
-Ask: "Want to do anything else? I can read from another module, generate more requirements, create tasks or test cases, or switch projects."
+Ask: "Want to do anything else? I can read from another module, generate more requirements (single-tier or tiered), create tasks or test cases, or switch projects."
 
 ## Development Guardrails
 
