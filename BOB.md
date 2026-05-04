@@ -2,7 +2,7 @@
 
 > **DISCLAIMER:** This is a personal passion project. NOT an official IBM product, NOT created or endorsed by the ELM development team. Use at your own risk. IBM, DOORS Next, ELM, EWM, and ETM are trademarks of IBM Corporation.
 
-This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 48 tools + 9 prompts. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
+This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 51 tools + 9 prompts. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
 
 ## TRIGGER PHRASES — match user intent to the right workflow
 

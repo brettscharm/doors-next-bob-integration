@@ -74,7 +74,7 @@ load_dotenv()
 # decide if a newer GitHub release exists; the `connect_to_elm`
 # response also surfaces it so users always know what version they're
 # running.
-__version__ = "0.1.14"
+__version__ = "0.1.15"
 GITHUB_REPO = "brettscharm/elm-mcp"
 
 app = Server("doors-next-server")
@@ -2542,8 +2542,10 @@ async def list_tools() -> list[Tool]:
                 "Move an EWM work item through its workflow (e.g. New → In Development → Done). "
                 "Looks up the project's workflow actions and PUTs with `?_action=<actionId>`. "
                 "Pass `target_state` as a state title ('In Development', 'Done') or identifier. "
-                "On servers where multiple actions can reach the same state, the tool tries "
-                "ranked candidates until one succeeds — the response includes which action was used."
+                "**Tip:** call `get_workflow_states(workitem_url)` first to see exactly which "
+                "states are available for THIS work item's workflow — different work item "
+                "types and projects use different state names. Don't guess 'Resolved' vs "
+                "'Done' vs 'Closed'."
             ),
             inputSchema={
                 "type": "object",
@@ -2558,6 +2560,28 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["workitem_url", "target_state"]
+            }
+        ),
+        Tool(
+            name="get_workflow_states",
+            description=(
+                "List the workflow states available for a specific EWM work "
+                "item — its current state plus every state defined in its "
+                "workflow. Different work-item types (Task, Defect, Story) and "
+                "different projects use different state names. Call this BEFORE "
+                "`transition_work_item` to know exactly which `target_state` "
+                "value to pass. Eliminates the 'guess Resolved / Done / Closed' "
+                "trial-and-error pattern. Read-only — no approval gate."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workitem_url": {
+                        "type": "string",
+                        "description": "Full work-item URL (from create_task / query_work_items / etc.)"
+                    }
+                },
+                "required": ["workitem_url"]
             }
         ),
         Tool(
@@ -2659,6 +2683,54 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["source_url", "link_type_uri", "target_url"]
             }
+        ),
+        Tool(
+            name="link_workitem_to_external_url",
+            description=(_WRITE_GATE +
+                "Attach an external URL (GitHub PR, GitLab MR, Bitbucket "
+                "commit, Confluence page — anything outside ELM) to an EWM "
+                "work item as a clickable reference. Lightweight cross-tool "
+                "integration: the external system doesn't need to speak OSLC, "
+                "we just store the URL on the EWM side. Use this for teams "
+                "hosting code in GitHub instead of Jazz SCM — link a task to "
+                "its PR so the trace web in EWM connects to the actual code "
+                "review. Uses oslc_cm:relatedURL — EWM displays it under "
+                "Links → References."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workitem_url": {
+                        "type": "string",
+                        "description": "Full EWM work-item URL"
+                    },
+                    "external_url": {
+                        "type": "string",
+                        "description": "External URL to attach (GitHub PR, etc.)"
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Display label for the link (default 'External link'). Used in confirmation message; the OSLC predicate is fixed at relatedURL."
+                    },
+                    "comment": {
+                        "type": "string",
+                        "description": "Optional comment about why this link exists"
+                    }
+                },
+                "required": ["workitem_url", "external_url"]
+            }
+        ),
+        Tool(
+            name="elm_mcp_health",
+            description=(
+                "Self-diagnose tool — returns connection state, MCP version, "
+                "auto-update status, active build runs, environment summary. "
+                "Call this when something feels broken: 'Bob, what's your "
+                "health?' / 'are you connected?' / 'what's wrong?'. Returns "
+                "everything the user (or you) need to debug an issue without "
+                "running setup.py --diagnose by hand. Read-only."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []}
         ),
         # ── EWM: defect creation ───────────────────────────────
         Tool(
@@ -5143,6 +5215,135 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             err = result.get('error', '') if result else ''
             return [TextContent(type="text", text=f"Failed to create link.\n{err}")]
 
+        # ── link_workitem_to_external_url ─────────────────────────
+        elif name == "link_workitem_to_external_url":
+            wi_url = arguments.get("workitem_url", "").strip()
+            ext_url = arguments.get("external_url", "").strip()
+            label = arguments.get("label", "External link").strip() or "External link"
+            comment = arguments.get("comment", "").strip()
+            if not wi_url or not ext_url:
+                return [TextContent(type="text", text="Error: workitem_url and external_url are required.")]
+            result = client.link_workitem_to_external_url(wi_url, ext_url, label, comment)
+            if result and 'error' not in result:
+                return [TextContent(type="text", text=(
+                    f"# External link attached\n\n"
+                    f"**EWM work item:** {wi_url}\n"
+                    f"**Linked to:** [{label}]({ext_url})\n"
+                    + (f"**Note:** {comment}\n" if comment else "")
+                    + f"\nIn EWM, this link appears under the work item's "
+                    f"**Links → References** panel as `oslc_cm:relatedURL`. "
+                    f"Click-through goes directly to the external URL."
+                ))]
+            err = result.get('error', 'unknown error') if result else 'unknown error'
+            if '403' in err or 'permission' in err.lower():
+                err += ("\n\nLikely cause: you don't have write access to "
+                        "this work item. Permissions are project-scoped — "
+                        "ask the EWM project admin to grant your role "
+                        "'Modify' on Work Items.")
+            return [TextContent(type="text", text=f"Error: {err}")]
+
+        # ── get_workflow_states ────────────────────────────────────
+        elif name == "get_workflow_states":
+            wi_url = arguments.get("workitem_url", "").strip()
+            if not wi_url:
+                return [TextContent(type="text", text="Error: workitem_url is required.")]
+            result = client.get_workflow_states(wi_url)
+            if result and 'error' not in result:
+                cur = result.get('current_state', {}) or {}
+                states = result.get('available_states', []) or []
+                lines = [
+                    f"# Workflow states for this work item",
+                    "",
+                    f"**Workflow:** `{result.get('workflow_id', '?')}`",
+                    f"**Current state:** **{cur.get('name', '?')}**",
+                    "",
+                    f"**Available states ({len(states)}):**",
+                ]
+                for s in states:
+                    marker = " ← current" if s.get('uri') == cur.get('uri') else ""
+                    lines.append(f"- {s.get('name', '?')}{marker}")
+                lines.append("")
+                lines.append(
+                    "Use any of these names as `target_state` when calling "
+                    "`transition_work_item`. The names ARE case-sensitive — "
+                    "copy verbatim."
+                )
+                return [TextContent(type="text", text="\n".join(lines))]
+            err = result.get('error', 'unknown') if result else 'unknown'
+            return [TextContent(type="text", text=f"Error: {err}")]
+
+        # ── elm_mcp_health (self-diagnose) ─────────────────────────
+        elif name == "elm_mcp_health":
+            import datetime as _dt
+            now = _dt.datetime.utcnow().isoformat() + "Z"
+            # Connection state
+            conn_state = "not connected"
+            elm_url = ""
+            elm_user = ""
+            if _client:
+                conn_state = "connected"
+                elm_url = getattr(_client, 'base_url', '') or getattr(_client, 'url', '')
+                elm_user = getattr(_client, 'username', '')
+            elif _client_error:
+                conn_state = f"error: {_client_error}"
+
+            # Auto-update status
+            try:
+                last_check_path = _last_check_path()
+                if os.path.exists(last_check_path):
+                    import time as _t
+                    with open(last_check_path) as f:
+                        last = float(f.read().strip() or "0")
+                    secs_ago = int(_t.time() - last)
+                    update_check = (
+                        f"last checked {secs_ago // 3600}h "
+                        f"{(secs_ago % 3600) // 60}m ago"
+                    )
+                else:
+                    update_check = "never checked yet"
+            except Exception:
+                update_check = "throttle file unreadable"
+
+            git_status = "git-managed (auto-update available)" if _is_git_managed() else "not git-managed (manual install)"
+            auto_update_enabled = (os.environ.get("ELM_MCP_AUTO_UPDATE", "1") != "0")
+
+            # Active runs
+            runs = _list_active_runs()
+            run_lines = []
+            for r in runs[:10]:
+                run_lines.append(
+                    f"  - `{r['run_id']}` [{r['command']}] phase={r['phase']} "
+                    f"started={r['started_at'][:19]}"
+                )
+            if not runs:
+                run_lines = ["  _(none active)_"]
+            elif len(runs) > 10:
+                run_lines.append(f"  _(+{len(runs)-10} more)_")
+
+            return [TextContent(type="text", text=(
+                f"# ELM MCP — Health Check\n\n"
+                f"**Time:** {now}\n"
+                f"**Version:** v{__version__}\n"
+                f"**Install dir:** `{_project_dir()}`\n"
+                f"**Git status:** {git_status}\n\n"
+                f"## Connection\n"
+                f"- **State:** {conn_state}\n"
+                f"- **ELM URL:** {elm_url or '_(none)_'}\n"
+                f"- **User:** {elm_user or '_(none)_'}\n\n"
+                f"## Updates\n"
+                f"- **Auto-update enabled:** {auto_update_enabled}\n"
+                f"- **Last check:** {update_check}\n"
+                f"- To update manually: say *update yourself* (single tool call)\n\n"
+                f"## Active build runs ({len(runs)})\n"
+                + "\n".join(run_lines) + "\n\n"
+                f"## Environment\n"
+                f"- **Python:** {sys.version.split()[0]} at `{sys.executable}`\n"
+                f"- **Tool count registered:** 51 (run `list_capabilities` for the full inventory)\n\n"
+                f"_If something looks wrong above and you can't fix it from "
+                f"chat: run `python3 setup.py --diagnose` from a terminal — "
+                f"it does the same checks plus a full MCP-handshake test._"
+            ))]
+
         # ── create_defect (EWM) ────────────────────────────────
         elif name == "create_defect":
             ewm_proj = arguments.get("ewm_project", "")
@@ -5329,7 +5530,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 # ── Main ──────────────────────────────────────────────────────
 
 async def main():
-    logger.info(f"IBM ELM MCP Server v{__version__} starting (48 tools, 9 prompts, 3 resource templates)")
+    logger.info(f"IBM ELM MCP Server v{__version__} starting (51 tools, 9 prompts, 3 resource templates)")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
 

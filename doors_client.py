@@ -1328,77 +1328,102 @@ class DOORSNextClient:
             return None
 
     def find_folder(self, project_url: str, folder_name: str) -> Optional[Dict]:
-        """Find an existing folder by name in a project"""
+        """Find an existing folder by name anywhere in a project's folder
+        tree. Walks recursively — finds folders at any depth.
+
+        Pre-v0.1.15 only searched root + 1 level deep, missing folders
+        created under sub-folders (and even folders created by
+        create_folder() under the project root because that helper writes
+        them under the *root folder*, not the project area).
+        """
         self._ensure_auth()
-        ns = self._NS_OSLC
         project_area_url = project_url.replace(
             '/oslc_rm/', '/process/project-areas/'
         ).replace('/services.xml', '')
 
-        try:
-            resp = self.session.get(
-                f"{self.base_url}/folders",
-                params={
-                    'oslc.where': f'public_rm:parent={project_area_url}',
-                    'oslc.select': '*',
-                },
-                headers={
-                    'Accept': 'application/rdf+xml',
-                    'OSLC-Core-Version': '2.0',
-                },
-                timeout=self._TIMEOUT,
-            )
-            if resp.status_code != 200:
-                return None
+        # BFS: queue starts with the project area; we expand each parent
+        # to its direct children and check titles. visited keeps us out
+        # of cycles (shouldn't happen in DNG but defensive).
+        visited: set = set()
+        queue: List[str] = [project_area_url]
+        while queue:
+            parent = queue.pop(0)
+            if parent in visited:
+                continue
+            visited.add(parent)
 
-            root = ET.fromstring(resp.content)
+            children = self._list_child_folders(parent)
+            for child in children:
+                if child.get('title') == folder_name:
+                    return child
+                child_url = child.get('url')
+                if child_url and child_url not in visited:
+                    queue.append(child_url)
 
-            # Check root level and children
-            for item in root.findall(f'.//{{{ns["nav"]}}}folder'):
-                title_el = item.find('dcterms:title', ns)
-                about = item.get(f'{{{ns["rdf"]}}}about')
-                if title_el is not None and title_el.text == folder_name:
-                    return {'title': title_el.text, 'url': about}
+            # Cap traversal at a sensible depth to avoid pathological
+            # cases. 1000 folders visited is way more than any real
+            # project.
+            if len(visited) > 1000:
+                break
 
-                # Check children of root
-                if about:
-                    child_result = self._find_child_folder(about, folder_name)
-                    if child_result:
-                        return child_result
+        return None
 
-            return None
-        except Exception:
-            return None
+    def _list_child_folders(self, parent_url: str) -> List[Dict]:
+        """Return direct children of a parent folder URL (or project
+        area URL for root-level folders). Tries both `public_rm:parent`
+        (used for project-area-as-parent) and `nav:parent` (used for
+        folder-as-parent) since DNG's predicate varies by parent type."""
+        ns = self._NS_OSLC
+        results: List[Dict] = []
+        # Try both predicate names — DNG uses different ones depending
+        # on whether the parent is a project area or a folder. We
+        # collect from both queries and dedupe by URL.
+        for predicate in ('public_rm:parent', 'nav:parent'):
+            try:
+                resp = self.session.get(
+                    f"{self.base_url}/folders",
+                    params={
+                        'oslc.where': f'{predicate}={parent_url}',
+                        'oslc.select': '*',
+                        'oslc.pageSize': '200',
+                    },
+                    headers={
+                        'Accept': 'application/rdf+xml',
+                        'OSLC-Core-Version': '2.0',
+                    },
+                    timeout=self._TIMEOUT,
+                )
+                if resp.status_code != 200:
+                    continue
+                root = ET.fromstring(resp.content)
+                for item in root.findall(f'.//{{{ns["nav"]}}}folder'):
+                    title_el = item.find('dcterms:title', ns)
+                    about = item.get(f'{{{ns["rdf"]}}}about')
+                    if not about:
+                        continue
+                    title = (title_el.text or '').strip() if title_el is not None else ''
+                    results.append({'title': title, 'url': about})
+            except Exception:
+                continue
+
+        # Dedupe by URL
+        seen = set()
+        out = []
+        for r in results:
+            u = r.get('url', '')
+            if u and u not in seen:
+                seen.add(u)
+                out.append(r)
+        return out
 
     def _find_child_folder(self, parent_url: str, folder_name: str) -> Optional[Dict]:
-        """Search for a folder by name in children of a parent folder"""
-        ns = self._NS_OSLC
-        try:
-            resp = self.session.get(
-                f"{self.base_url}/folders",
-                params={
-                    'oslc.where': f'nav:parent={parent_url}',
-                    'oslc.select': '*',
-                    'oslc.pageSize': '100',
-                },
-                headers={
-                    'Accept': 'application/rdf+xml',
-                    'OSLC-Core-Version': '2.0',
-                },
-                timeout=self._TIMEOUT,
-            )
-            if resp.status_code != 200:
-                return None
-
-            root = ET.fromstring(resp.content)
-            for item in root.findall(f'.//{{{ns["nav"]}}}folder'):
-                title_el = item.find('dcterms:title', ns)
-                about = item.get(f'{{{ns["rdf"]}}}about')
-                if title_el is not None and title_el.text == folder_name:
-                    return {'title': title_el.text, 'url': about}
-            return None
-        except Exception:
-            return None
+        """Backward-compat shim — kept for any external callers that may
+        still reference it. Internally we use _list_child_folders +
+        find_folder's BFS now."""
+        for child in self._list_child_folders(parent_url):
+            if child.get('title') == folder_name:
+                return child
+        return None
 
     # ── Write: Link Types ─────────────────────────────────────
 
@@ -3331,6 +3356,98 @@ class DOORSNextClient:
         except Exception as e:
             return {'error': f'PUT failed: {e}'}
 
+    def get_workflow_states(self, workitem_url: str) -> Dict:
+        """List the workflow states available for a given EWM work item.
+
+        Returns the work item's CURRENT state plus the full list of
+        states defined in its workflow (Task, Defect, Story, etc. each
+        have their own workflow). Useful for `transition_work_item`
+        callers — pick a target state from this list rather than
+        guessing 'Resolved' vs 'Done' vs 'Closed' (varies per project).
+
+        Returns:
+            {'current_state': {'name', 'uri'}, 'available_states': [{'name', 'uri'}, ...]}
+            or {'error': '...'} on failure.
+        """
+        self._ensure_auth()
+        try:
+            get_resp = self.session.get(
+                workitem_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if get_resp.status_code != 200:
+                return {'error': f'Failed to fetch work item: HTTP {get_resp.status_code}'}
+        except Exception as e:
+            return {'error': f'Failed to fetch work item: {e}'}
+
+        import re as _re
+        rdf_str = get_resp.content.decode('utf-8')
+        sm = _re.search(
+            r'<[A-Za-z0-9_]+:state\s+rdf:resource="([^"]+/workflows/[^"]+)"\s*/>',
+            rdf_str,
+        )
+        if not sm:
+            return {'error': 'Could not find rtc_cm:state on the work item.'}
+        current_state_uri = sm.group(1)
+
+        base_match = _re.match(r'(.+/workflows/[^/]+)/states/([^/]+)/[^/]+$',
+                               current_state_uri)
+        if not base_match:
+            return {'error': f'Could not parse workflow base from: {current_state_uri}'}
+        wf_base = base_match.group(1)
+        wf_id = base_match.group(2)
+        states_list_url = f"{wf_base}/states/{wf_id}"
+
+        try:
+            states_resp = self.session.get(
+                states_list_url,
+                headers={'Accept': 'application/rdf+xml', 'OSLC-Core-Version': '2.0'},
+                timeout=self._TIMEOUT,
+            )
+            if states_resp.status_code != 200:
+                return {'error': f'Failed to fetch workflow states: HTTP {states_resp.status_code}'}
+            sroot = ET.fromstring(states_resp.content)
+        except Exception as e:
+            return {'error': f'Failed to fetch workflow states: {e}'}
+
+        ns = self._NS_OSLC
+        available: List[Dict] = []
+        current_name = ""
+        rdfs_label_qname = '{http://www.w3.org/2000/01/rdf-schema#}label'
+        # Collect every state in the workflow
+        for s in sroot.iter(f'{{{ns["rdf"]}}}Description'):
+            about = s.get(f'{{{ns["rdf"]}}}about', '')
+            title_el = s.find('dcterms:title', ns)
+            label_el = s.find(rdfs_label_qname)
+            name = ""
+            if title_el is not None and title_el.text:
+                name = title_el.text.strip()
+            elif label_el is not None and label_el.text:
+                name = label_el.text.strip()
+            if about and name:
+                available.append({'name': name, 'uri': about})
+                if about == current_state_uri:
+                    current_name = name
+
+        # Dedupe (some servers return states twice via different rdf:type entries)
+        seen_uris = set()
+        deduped = []
+        for st in available:
+            if st['uri'] not in seen_uris:
+                seen_uris.add(st['uri'])
+                deduped.append(st)
+
+        return {
+            'workflow_id': wf_id,
+            'current_state': {'name': current_name, 'uri': current_state_uri},
+            'available_states': sorted(deduped, key=lambda s: s['name'].lower()),
+        }
+
     def transition_work_item(self, workitem_url: str, target_state: str) -> Dict:
         """Transition an EWM work item to the named state.
 
@@ -3623,6 +3740,47 @@ class DOORSNextClient:
         return out
 
     # ── Cross-domain link creation ─────────────────────────────
+
+    def link_workitem_to_external_url(self, workitem_url: str,
+                                       external_url: str,
+                                       label: str = "External link",
+                                       comment: str = "") -> Dict:
+        """Attach an external URL (GitHub PR, GitLab MR, Bitbucket commit,
+        Confluence page, anything outside ELM) to an EWM work item as an
+        OSLC reference. After this call, opening the work item in EWM
+        shows a clickable link to the external resource.
+
+        This is the lightweight cross-tool integration — no need for
+        the external system to speak OSLC; we just store the URL on the
+        EWM side. Pairs naturally with create_task / create_defect /
+        create_test_case (which write internal links) for teams that
+        host code in GitHub instead of Jazz SCM.
+
+        Uses oslc_cm:relatedURL — a generic "this work item references
+        this URL" relation. EWM displays it under "Links → References"
+        in the work-item UI.
+
+        Returns {'workitem': str, 'external_url': str, 'label': str}
+        on success or {'error': '...'} on failure.
+        """
+        self._ensure_auth()
+        # Reuse the create_link plumbing — it does GET-with-ETag, modifies
+        # the RDF, and PUTs with If-Match. We just pick a generic
+        # oslc_cm:relatedURL predicate that EWM understands for arbitrary
+        # external references.
+        result = self.create_link(
+            source_url=workitem_url,
+            link_type_uri='http://open-services.net/ns/cm#relatedURL',
+            target_url=external_url,
+        )
+        if result and 'error' not in result:
+            return {
+                'workitem': workitem_url,
+                'external_url': external_url,
+                'label': label,
+                'comment': comment,
+            }
+        return result
 
     def create_link(self, source_url: str, link_type_uri: str,
                     target_url: str) -> Dict:
