@@ -354,13 +354,15 @@ def write_cursor(py_exe: str, home: Path) -> list[tuple[str, str, Path]]:
 _BOB_ALWAYS_ALLOW = [
     "connect_to_elm",
     "list_projects",
+    "list_capabilities",
     "get_modules",
     "get_module_requirements",
-    "save_requirements",
     "search_requirements",
     "get_artifact_types",
     "get_link_types",
     "get_attribute_definitions",
+    "get_ewm_workitem_types",
+    "find_folder",
     "list_baselines",
     "compare_baselines",
     "extract_pdf",
@@ -374,8 +376,10 @@ _BOB_ALWAYS_ALLOW = [
     "scm_get_workitem_changesets",
     "review_get",
     "review_list_open",
-    "generate_chart",
 ]
+# Note: generate_chart and save_requirements are intentionally NOT in this
+# list. Both write to local disk (PNG / JSON), so they should prompt the
+# user before running. See Bob compatibility audit findings (v0.1.13).
 
 
 def write_bob(py_exe: str, home: Path) -> list[tuple[str, str, Path]]:
@@ -698,20 +702,9 @@ def print_config() -> int:
     server_path = str((HERE / SERVER_SCRIPT).resolve())
 
     # The standard "alwaysAllow" set — read-only tools that don't need
-    # per-call confirmation in Bob. Keep in sync with write_bob() above.
-    always_allow = [
-        "connect_to_elm", "list_projects", "get_modules",
-        "get_module_requirements", "save_requirements",
-        "search_requirements", "get_artifact_types", "get_link_types",
-        "get_attribute_definitions", "list_baselines",
-        "compare_baselines", "extract_pdf",
-        "list_global_configurations", "list_global_components",
-        "get_global_config_details", "query_work_items",
-        "scm_list_projects", "scm_list_changesets",
-        "scm_get_changeset", "scm_get_workitem_changesets",
-        "review_get", "review_list_open", "generate_chart",
-        "list_capabilities", "update_elm_mcp",
-    ]
+    # per-call confirmation in Bob. MUST stay in sync with _BOB_ALWAYS_ALLOW
+    # above (single source of truth: this list mirrors that one).
+    always_allow = list(_BOB_ALWAYS_ALLOW) + ["update_elm_mcp"]
     config = {
         "mcpServers": {
             "doors-next": {

@@ -74,7 +74,7 @@ load_dotenv()
 # decide if a newer GitHub release exists; the `connect_to_elm`
 # response also surfaces it so users always know what version they're
 # running.
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 GITHUB_REPO = "brettscharm/elm-mcp"
 
 app = Server("doors-next-server")
@@ -408,6 +408,49 @@ async def list_prompts() -> list[Prompt]:
             ],
         ),
         Prompt(
+            name="import-work-item",
+            description=(
+                "Brownfield work-item import — user provides a PDF (Jira epic "
+                "export, Azure DevOps work item, etc.) and AI parses the "
+                "complete work-item graph into ELM: an EWM work item for the "
+                "main item, DNG requirements for the functional/NFR sections, "
+                "ETM test cases for the acceptance criteria, EWM child stories "
+                "for linked sub-items, and proper cross-tool links between "
+                "all of them. Performs gap detection (vague NFRs, untestable "
+                "ACs, missing fields) and surfaces decision points (work item "
+                "type — picked from the project's actual list, NEVER guessed). "
+                "Composes naturally with /build-project for code generation "
+                "after import."
+            ),
+            arguments=[
+                PromptArgument(
+                    name="pdf_path",
+                    description="Absolute path to the work-item PDF (Jira epic export, ADO work item, etc.). Optional; AI will ask if not provided.",
+                    required=False,
+                ),
+                PromptArgument(
+                    name="dng_project",
+                    description="DNG project for the requirements module. Optional — AI will use connected project or ask.",
+                    required=False,
+                ),
+                PromptArgument(
+                    name="ewm_project",
+                    description="EWM project for the work item + child stories. Optional — AI will ask if not provided.",
+                    required=False,
+                ),
+                PromptArgument(
+                    name="etm_project",
+                    description="ETM project for the test cases (from acceptance criteria). Optional — AI will ask if not provided.",
+                    required=False,
+                ),
+                PromptArgument(
+                    name="source_hint",
+                    description="Hint about the source format: 'jira', 'azure-devops', 'servicenow', 'aha', 'linear', 'github'. Optional — AI auto-detects.",
+                    required=False,
+                ),
+            ],
+        ),
+        Prompt(
             name="build-project",
             description=(
                 "End-to-end agentic project build with IBM ELM as the system "
@@ -700,6 +743,212 @@ async def get_prompt(name: str, arguments: dict | None = None) -> list[PromptMes
             role="user",
             content=TextContent(type="text", text=(
                 intro + content_block + hint_block + target_block + instructions
+            )),
+        )]
+
+    elif name == "import-work-item":
+        pdf_path = args.get("pdf_path", "")
+        dng_proj = args.get("dng_project", "")
+        ewm_proj = args.get("ewm_project", "")
+        etm_proj = args.get("etm_project", "")
+        source_hint = args.get("source_hint", "")
+
+        intro = (
+            "The user wants to import a complete work-item graph (epic + "
+            "stories + reqs + tests + cross-links) from a PDF into ELM. "
+            "This is the BROWNFIELD-COMPLETE path — multi-artifact, "
+            "multi-tool. The PDF is typically a Jira epic export, an "
+            "Azure DevOps work item, or similar. You preserve the user's "
+            "wording wherever possible — you structure, don't rewrite.\n\n"
+        )
+
+        if pdf_path:
+            input_block = (
+                f"PDF to import: {pdf_path}\n\n"
+                f"Step 1: call `extract_pdf` with this path. You'll get the "
+                f"full text including title, metadata, sections, comments. "
+                f"Don't ask the user — just extract.\n\n"
+            )
+        else:
+            input_block = (
+                "The user hasn't provided a PDF path yet. Ask them once: "
+                "*\"Drop the absolute path to the work-item PDF — Jira epic "
+                "export, Azure DevOps work item, anything similar.\"* Wait "
+                "for the path, then call `extract_pdf`.\n\n"
+            )
+
+        hint_block = (
+            f"Source hint from user: '{source_hint}'. Adjust parsing for "
+            f"that format's conventions (Jira PDFs have header metadata + "
+            f"a Description block; ADO work items have different layout; "
+            f"etc.).\n\n"
+        ) if source_hint else ""
+
+        target_block = (
+            "## Target projects\n\n"
+        )
+        target_block += (
+            f"DNG project: '{dng_proj}'\n" if dng_proj
+            else "DNG project: not specified — use connected project or ask.\n"
+        )
+        target_block += (
+            f"EWM project: '{ewm_proj}'\n" if ewm_proj
+            else "EWM project: not specified — ask which one.\n"
+        )
+        target_block += (
+            f"ETM project: '{etm_proj}'\n\n" if etm_proj
+            else "ETM project: not specified — ask which one.\n\n"
+        )
+
+        instructions = (
+            "## How to parse the work-item PDF\n\n"
+            "After extraction, walk through the text and identify EVERY "
+            "category. Produce a structured plan, not a single artifact:\n\n"
+            "### A. The MAIN work item (1)\n"
+            "Look for the work-item title, ID (e.g. 'OMS-28894'), type "
+            "label ('Type: Epic'), description, status, labels, priority, "
+            "assignee, dates, fix version, components. Preserve the ID in "
+            "the EWM artifact title or as a custom attribute so the trace "
+            "back to the source is obvious.\n\n"
+            "### B. Functional Requirements (atomic 'shall' statements)\n"
+            "Look in 'Functional Requirements' / 'Key Functional "
+            "Requirements' / similar sections. Convert each to atomic "
+            "shall-statements. Preserve the user's wording — only split "
+            "when an item bundles multiple requirements.\n\n"
+            "### C. Non-Functional Requirements\n"
+            "Performance, reliability, security, observability, retention, "
+            "concurrency, etc. Same atomic shape, tagged as NFR.\n\n"
+            "### D. Acceptance Criteria — for ETM, NOT for DNG\n"
+            "Numbered AC lists or 'Definition of Done' items that read "
+            "like test conditions. Each becomes a test case in ETM, "
+            "linked to the relevant requirement(s). DO NOT push as DNG "
+            "requirements.\n\n"
+            "### E. Linked work items (children, sub-tasks, related)\n"
+            "Section often called 'Links' / 'Sub-tasks' / 'Implements' / "
+            "'Relates to'. Each becomes a separate EWM work item linked "
+            "to the main one. Title-only is fine if no body text is "
+            "available — that's a 'completeness gap' to surface (see "
+            "below).\n\n"
+            "### F. Skipped (project metadata)\n"
+            "Business Goal, Business Value, In/Out of Scope, Risks, "
+            "Dependencies, Assumptions, Definition of Done sections that "
+            "aren't AC-shaped. Note them as 'Skipped' so the user sees "
+            "you noticed.\n\n"
+            "## Type resolution — list-driven, never guess\n\n"
+            "After parsing, before previewing:\n"
+            "1. Read the type from the PDF (e.g. 'Type: Epic')\n"
+            "2. Call `get_ewm_workitem_types` for the target EWM project. "
+            "You'll get the actual list (e.g. Capability, Defect, "
+            "Portfolio Epic, Solution Epic, Task, etc.)\n"
+            "3. Match the PDF type to the project's list:\n"
+            "   - **Exact match** (case-insensitive): use it silently, "
+            "mention as default in preview\n"
+            "   - **No match**: SHOW THE USER THE ACTUAL LIST, let them "
+            "pick. Don't ask 'is this an epic or story' — show their "
+            "project's real types\n"
+            "   - **Ambiguous** (multiple plausible matches): show list, "
+            "let them pick\n\n"
+            "Same principle applies to status (default 'New' or whatever "
+            "the project's initial state is) and severity (don't ask "
+            "unless creating a Defect-typed item that requires it).\n\n"
+            "## Gap detection — surface before pushing\n\n"
+            "Before showing the preview, audit the parsed artifacts for "
+            "five categories of gaps:\n\n"
+            "1. **Quality gaps** (actionable): vague NFRs without "
+            "measurable criteria, ACs without verifiable conditions, "
+            "risks without severity ranking, etc.\n"
+            "2. **Mapping gaps** (mostly informational): fields like "
+            "'Fix Version' that don't have an EWM equivalent (note as "
+            "'will skip')\n"
+            "3. **Reference gaps** (informational only): external systems "
+            "/ repos / tools mentioned in the body — preserved as text, "
+            "not enforced\n"
+            "4. **Completeness gaps** (decision needed): linked sub-tasks "
+            "referenced but with no body in this PDF — create as "
+            "title-only placeholders or skip?\n"
+            "5. **Decisions** (only when something is genuinely "
+            "ambiguous — the type-list-pick from above is one of these)\n\n"
+            "**Critical:** assignee mappings are NOT a gap. Original Jira "
+            "assignee names are preserved in artifact text where they "
+            "appear naturally (description, comments). The EWM assignee "
+            "field defaults to UNSET — never try to match Jira usernames "
+            "to EWM users. Mention as informational, never ask.\n\n"
+            "## The preview\n\n"
+            "Show a comprehensive preview before pushing anything:\n\n"
+            "```\n"
+            "Plan: import OMS-28894 into ELM\n\n"
+            "  EWM (1 main + N children)\n"
+            "    Main: 'OMS-28894: <title>' (Type: Epic — exact match in project)\n"
+            "    Children:\n"
+            "      - <child 1 title> (Story)\n"
+            "      - ...\n\n"
+            "  DNG (X reqs in new module '<suggested name>')\n"
+            "    Functional Requirements (Y) — full list\n"
+            "    Non-Functional Requirements (Z) — full list\n\n"
+            "  ETM (W test cases) — from acceptance criteria\n"
+            "    Each linked to the relevant requirement(s)\n\n"
+            "  Cross-links (N total): list them\n\n"
+            "  Skipped (project metadata): Business Goal, Risks, etc.\n\n"
+            "  Gaps to address:\n"
+            "    QUALITY (Q): vague reqs / untestable ACs\n"
+            "    COMPLETENESS (C): placeholder children — create title-only?\n\n"
+            "  Defaults I'll use (informational):\n"
+            "    Type: Epic / Status: New / Assignee: unset\n"
+            "    (Other available types in your EWM project: ...)\n\n"
+            "  Address gaps + decisions, or 'push with defaults'.\n"
+            "```\n\n"
+            "## Wait for explicit approval — same gate pattern\n\n"
+            "Don't push until the user says 'yes' / 'looks good' / 'ship it' / "
+            "'push with defaults'. Three escape hatches:\n"
+            "  - **Address each**: user answers the gaps individually\n"
+            "  - **Push with defaults**: AI picks reasonable answer for "
+            "every open question, surfaces every choice in the post-push "
+            "report\n"
+            "  - **Ignore the gaps**: just push, skip the quality items "
+            "and placeholder children\n\n"
+            "## Push order matters\n\n"
+            "Create artifacts in dependency order so the cross-links "
+            "succeed:\n"
+            "  1. EWM main work item (no inbound links yet)\n"
+            "  2. DNG requirements via `create_requirements` with "
+            "`module_name=<chosen>` (auto-creates module + binds reqs)\n"
+            "  3. EWM child work items via `create_task`/`create_defect`/"
+            "etc. with `requirement_url=<main work item URL>` if they "
+            "logically implement parts of the main item\n"
+            "  4. ETM test cases via `create_test_case` with "
+            "`requirement_url=<the relevant DNG req URL>` — back-link is "
+            "now automatic (v0.1.12 fix)\n\n"
+            "Each `create_*` call writes its forward link AND the inverse "
+            "back-link onto the requirement (since v0.1.12), so the trace "
+            "web is complete in both directions without extra calls.\n\n"
+            "## After the push — the post-push report\n\n"
+            "Show every URL as a markdown link, plus every default-choice "
+            "you made during 'push with defaults':\n"
+            "  - 'Type: Epic (matched from PDF)'\n"
+            "  - 'Status: New (default for this project)'\n"
+            "  - 'Assignee: unset (originally <Jira name> — set manually "
+            "if needed)'\n"
+            "  - 'Placeholder children created (titles only, no body)'\n"
+            "  - 'Quality issues flagged on these reqs: REQ-7 (vague NFR), "
+            "AC-9 (untestable as written)'\n\n"
+            "Then offer the natural next step:\n"
+            "  *\"Want me to /build-project from this state? I'd skip "
+            "Phases 1–4 (artifacts already created), pick up at Phase 5 "
+            "(your review in ELM), then re-pull current state and write "
+            "the actual code.\"*\n\n"
+            "## What this prompt is NOT\n\n"
+            "  - Not for plain-text requirement paste — that's "
+            "/import-requirements (single-artifact-type)\n"
+            "  - Not for code generation — composes with /build-project "
+            "afterward\n"
+            "  - Not for non-PDF sources — those are out of scope for "
+            "v0.1.13 (Notion exports, ADO API, etc. could be added later)"
+        )
+
+        return [PromptMessage(
+            role="user",
+            content=TextContent(type="text", text=(
+                intro + input_block + hint_block + target_block + instructions
             )),
         )]
 
@@ -1267,6 +1516,86 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["project_identifier", "title"]
+            }
+        ),
+        Tool(
+            name="add_to_module",
+            description=(_WRITE_GATE +
+                "Bind one or more EXISTING requirements into an EXISTING module's "
+                "structure. Use this when requirements were created without a "
+                "module_name (so they're loose in a folder) and you need to add "
+                "them to a module afterward. For NEW requirements, pass "
+                "module_name to `create_requirements` instead — that auto-binds "
+                "during creation. Uses DNG's Module Structure API (the "
+                "DoorsRP-Request-Type: public 2.0 path that probe/MODULE_BINDING_FINDINGS.md "
+                "documents). Idempotent — safe to re-run; already-bound reqs are skipped."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "module_url": {
+                        "type": "string",
+                        "description": "Full URL of the existing DNG module (from get_modules or create_module)"
+                    },
+                    "requirement_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of full requirement URLs to bind into the module"
+                    }
+                },
+                "required": ["module_url", "requirement_urls"]
+            }
+        ),
+        Tool(
+            name="create_folder",
+            description=(_WRITE_GATE +
+                "Create a folder in a DNG project's folder tree. Useful for "
+                "organizing requirements before creating them — e.g. 'Business "
+                "Requirements / Run 2026-05'. Returns the folder URL which can "
+                "be passed as `folder_url` to subsequent `create_requirement` "
+                "calls. If you just want to ensure a folder exists, call "
+                "`find_folder` first; if it returns None, then `create_folder`."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_identifier": {
+                        "type": "string",
+                        "description": "DNG project number or name"
+                    },
+                    "folder_name": {
+                        "type": "string",
+                        "description": "Name for the new folder"
+                    },
+                    "parent_folder_url": {
+                        "type": "string",
+                        "description": "Optional parent folder URL. If omitted, creates at the project root."
+                    }
+                },
+                "required": ["project_identifier", "folder_name"]
+            }
+        ),
+        Tool(
+            name="find_folder",
+            description=(
+                "Look up a DNG folder by name within a project. Returns the "
+                "folder URL if found, otherwise None. Use this BEFORE "
+                "`create_folder` to avoid creating duplicates. Read-only — no "
+                "approval gate."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_identifier": {
+                        "type": "string",
+                        "description": "DNG project number or name"
+                    },
+                    "folder_name": {
+                        "type": "string",
+                        "description": "Folder name to search for (case-sensitive)"
+                    }
+                },
+                "required": ["project_identifier", "folder_name"]
             }
         ),
         Tool(
@@ -1876,6 +2205,29 @@ async def list_tools() -> list[Tool]:
                 "required": ["ewm_project"]
             }
         ),
+        Tool(
+            name="get_ewm_workitem_types",
+            description=(
+                "List the available work item types in an EWM project — Epic, "
+                "Capability, Story, Task, Defect, etc. — whatever the project's "
+                "process configuration exposes. Use this BEFORE `create_task` / "
+                "`create_defect` when you need to know what types are available "
+                "(e.g. when importing a Jira epic and figuring out what the "
+                "EWM-side equivalent is called). Returns name, creation_url, "
+                "shape_url for each type. Show the user the actual list rather "
+                "than guessing what types might exist."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ewm_project": {
+                        "type": "string",
+                        "description": "EWM project number or name (use list_projects domain='ewm' to find it)"
+                    }
+                },
+                "required": ["ewm_project"]
+            }
+        ),
         # ── Cross-domain link creation ─────────────────────────
         Tool(
             name="create_link",
@@ -2164,14 +2516,31 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             # approvals) AND longer messages that include those tokens. We REJECT:
             # empty, just whitespace, or a clear non-approval ("no", "stop",
             # "wait", "not yet", "let me think").
+            #
+            # Word lists are CONSERVATIVE — bare verbs like "do", "go", "build",
+            # "push", "pull", "continue" were removed because they trip on
+            # questions ("do I need to approve each one?", "go where?", "can
+            # you push when I say so?"). Multi-word phrases ("go ahead", "push
+            # it", "build it") still match via substring on signal_lower.
             approval_words = {
-                "yes", "yeah", "yep", "yup", "go", "ahead", "approved", "approve",
-                "ship", "push", "continue", "proceed", "do", "ok", "okay", "good",
-                "looks", "perfect", "great", "alright", "lgtm", "build", "pull",
+                "yes", "yeah", "yep", "yup", "approved", "approve", "approves",
+                "ok", "okay", "lgtm", "ship", "ships",
+                "looks", "perfect", "alright", "confirmed", "confirm",
+            }
+            approval_phrases = {
+                "go ahead", "push it", "push them", "ship it", "build it",
+                "looks good", "let's go", "lets go", "proceed", "continue with",
+                "do it", "make it so", "go for it",
             }
             rejection_words = {
                 "no", "stop", "wait", "hold", "cancel", "abort", "reject",
-                "not yet", "don't", "dont", "skip",
+                "rejected", "skip", "skipped",
+            }
+            rejection_phrases = {
+                "not yet", "not now", "don't", "dont", "do not",
+                "hold on", "hold up", "let me think",
+                "wait for", "wait until", "stop right",
+                "i don't", "i dont", "i'm not", "im not",
             }
             signal_lower = user_signal.lower()
             signal_tokens = set(t.strip(".,!?;:") for t in signal_lower.split())
@@ -2187,8 +2556,17 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     "or you assuming they're satisfied, does NOT count."
                 ))]
 
-            # Check for explicit rejection first (don't auto-advance on a "no")
-            if any(rw in signal_lower for rw in rejection_words) and not any(aw in signal_tokens for aw in approval_words):
+            # Detect rejection (token OR multi-word phrase). Critically, a
+            # rejection PHRASE like "do not push" beats any approval word in
+            # the same string — phrase-match wins because it's more specific.
+            rejection_phrase_hit = any(rp in signal_lower for rp in rejection_phrases)
+            rejection_token_hit = bool(signal_tokens & rejection_words)
+            approval_phrase_hit = any(ap in signal_lower for ap in approval_phrases)
+            approval_token_hit = bool(signal_tokens & approval_words)
+
+            # Rejection wins if there's a rejection phrase, OR a rejection
+            # token without any approval signal at all.
+            if rejection_phrase_hit or (rejection_token_hit and not (approval_phrase_hit or approval_token_hit)):
                 return [TextContent(type="text", text=(
                     f"🚦 GATE LOCKED — user said something that looks like a "
                     f"REJECTION, not an approval.\n\n"
@@ -2200,10 +2578,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     f"want to stop the build, acknowledge and end."
                 ))]
 
-            # Require at least one explicit approval token. A bare "ok" qualifies
-            # but we surface what we matched so the user knows what we accepted.
+            # Approval requires either an approval phrase ("go ahead", "ship
+            # it", "looks good") OR an approval token ("yes", "ok", "lgtm").
             matched = signal_tokens & approval_words
-            if not matched:
+            matched_phrases = {ap for ap in approval_phrases if ap in signal_lower}
+            if not matched and not matched_phrases:
                 return [TextContent(type="text", text=(
                     f"🚦 GATE LOCKED — user_signal doesn't contain explicit approval.\n\n"
                     f"You sent: \"{user_signal}\"\n\n"
@@ -2217,8 +2596,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
             next_phase = current_phase + 1
             ctx_block = f"\n\n**Context from prior phase:** {context}" if context else ""
+            all_matches = sorted(matched) + sorted(matched_phrases)
             ack = (f"✓ Phase {current_phase} approved (matched on: "
-                   f"{', '.join(sorted(matched))}). Advancing to Phase {next_phase}.")
+                   f"{', '.join(all_matches) if all_matches else 'approval'}). "
+                   f"Advancing to Phase {next_phase}.")
 
             phase_scripts = {
                 1: ("PHASE 1 — PROJECT INTAKE INTERVIEW",
@@ -3129,6 +3510,80 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 "the project has a 'Module' artifact type defined."
             ))]
 
+        # ── add_to_module ─────────────────────────────────────────
+        elif name == "add_to_module":
+            module_url = arguments.get("module_url", "")
+            requirement_urls = arguments.get("requirement_urls", []) or []
+            if not module_url:
+                return [TextContent(type="text", text="Error: module_url is required.")]
+            if not requirement_urls:
+                return [TextContent(type="text", text="Error: requirement_urls list cannot be empty.")]
+            result = client.add_to_module(module_url, requirement_urls)
+            if result and 'error' not in result:
+                added = result.get('added', 0)
+                return [TextContent(type="text", text=(
+                    f"# Module Bind Complete\n\n"
+                    f"**Bound {added} new requirement(s)** to module {module_url}\n\n"
+                    f"(Already-bound requirements in the input list were skipped — "
+                    f"the operation is idempotent. Total requested: "
+                    f"{len(requirement_urls)}.)"
+                ))]
+            err = result.get('error', 'unknown error') if result else 'unknown error'
+            return [TextContent(type="text", text=(
+                f"Error: failed to bind to module — {err}\n"
+                "If the error is PHASE_GATE-related, the project's module "
+                "structure API may not be enabled. Check probe/MODULE_BINDING_FINDINGS.md."
+            ))]
+
+        # ── create_folder ─────────────────────────────────────────
+        elif name == "create_folder":
+            proj_id = arguments.get("project_identifier", "")
+            folder_name = arguments.get("folder_name", "")
+            parent_url = arguments.get("parent_folder_url", "") or None
+            if not proj_id or not folder_name:
+                return [TextContent(type="text", text="Error: project_identifier and folder_name are required.")]
+            if not _projects_cache:
+                _projects_cache = client.list_projects()
+            project = _find_by_identifier(_projects_cache, proj_id)
+            if not project:
+                return [TextContent(type="text", text=f"Project not found: '{proj_id}'")]
+            result = client.create_folder(project['url'], folder_name, parent_url)
+            if result and 'error' not in result:
+                return [TextContent(type="text", text=(
+                    f"# Folder Created\n\n"
+                    f"**Click to open:** [{result.get('title', folder_name)}]({result.get('url', '')})\n\n"
+                    f"- **Name:** {result.get('title', folder_name)}\n"
+                    f"- **URL:** {result.get('url', '')}\n\n"
+                    f"Pass `folder_url=\"{result.get('url', '')}\"` to subsequent "
+                    f"`create_requirement` calls to drop them in this folder."
+                ))]
+            err = result.get('error', 'unknown error') if result else 'unknown error'
+            return [TextContent(type="text", text=f"Error: failed to create folder — {err}")]
+
+        # ── find_folder ────────────────────────────────────────────
+        elif name == "find_folder":
+            proj_id = arguments.get("project_identifier", "")
+            folder_name = arguments.get("folder_name", "")
+            if not proj_id or not folder_name:
+                return [TextContent(type="text", text="Error: project_identifier and folder_name are required.")]
+            if not _projects_cache:
+                _projects_cache = client.list_projects()
+            project = _find_by_identifier(_projects_cache, proj_id)
+            if not project:
+                return [TextContent(type="text", text=f"Project not found: '{proj_id}'")]
+            result = client.find_folder(project['url'], folder_name)
+            if result:
+                return [TextContent(type="text", text=(
+                    f"# Folder Found\n\n"
+                    f"**Click to open:** [{result.get('title', folder_name)}]({result.get('url', '')})\n\n"
+                    f"- **Name:** {result.get('title', folder_name)}\n"
+                    f"- **URL:** {result.get('url', '')}"
+                ))]
+            return [TextContent(type="text", text=(
+                f"No folder named '{folder_name}' found in project '{project['title']}'. "
+                f"Call `create_folder` to create it (after user approval)."
+            ))]
+
         elif name == "create_requirements":
             proj_id = arguments.get("project_identifier", "")
             folder_name = arguments.get("folder_name", "")
@@ -3938,6 +4393,29 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 lines.append(f"  - {it.get('url', '')}")
             return [TextContent(type="text", text="\n".join(lines))]
 
+        # ── get_ewm_workitem_types ─────────────────────────────
+        elif name == "get_ewm_workitem_types":
+            ewm_proj_arg = arguments.get("ewm_project", "")
+            if not ewm_proj_arg:
+                return [TextContent(type="text", text="Error: ewm_project is required.")]
+            ewm_projects = client.list_ewm_projects()
+            ewm_match = _find_by_identifier(ewm_projects, ewm_proj_arg)
+            if not ewm_match:
+                return [TextContent(type="text",
+                    text=f"EWM project not found: {ewm_proj_arg}. Use list_projects domain='ewm' to see available.")]
+            types = client.get_ewm_workitem_types(ewm_match['url'])
+            if not types:
+                return [TextContent(type="text",
+                    text=f"No work item types discoverable for EWM project '{ewm_match.get('title', ewm_proj_arg)}'. The project's services document may not expose creation factories.")]
+            lines = [f"# Work item types in {ewm_match.get('title', ewm_proj_arg)}", "",
+                     f"**{len(types)} type(s)** — show this list to the user when they need to pick a type:", ""]
+            for t in types:
+                lines.append(f"- **{t['name']}**")
+                lines.append(f"  - creation_url: `{t['creation_url']}`")
+                if t.get('shape_url'):
+                    lines.append(f"  - shape_url: `{t['shape_url']}`")
+            return [TextContent(type="text", text="\n".join(lines))]
+
         # ── create_link (cross-domain) ─────────────────────────
         elif name == "create_link":
             src = arguments.get("source_url", "")
@@ -4147,7 +4625,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 # ── Main ──────────────────────────────────────────────────────
 
 async def main():
-    logger.info(f"IBM ELM MCP Server v{__version__} starting (40 tools, 6 prompts, 3 resource templates)")
+    logger.info(f"IBM ELM MCP Server v{__version__} starting (44 tools, 7 prompts, 3 resource templates)")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
 

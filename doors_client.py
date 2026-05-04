@@ -2181,6 +2181,118 @@ class DOORSNextClient:
         except Exception:
             return []
 
+    def get_ewm_workitem_types(self, service_provider_url: str) -> List[Dict]:
+        """Get ALL work item types available in an EWM project.
+
+        Public method for discovering what types of work items can be
+        created in a given EWM project — Epic, Capability, Story, Task,
+        Defect, Bug, Issue, Engineering Task, etc. — whatever the
+        project's process configuration exposes.
+
+        Args:
+            service_provider_url: EWM project's service provider URL
+                (from list_ewm_projects → 'url' field)
+
+        Returns:
+            List of {'name': str, 'creation_url': str, 'shape_url': str}
+            sorted by name. The 'name' is what the EWM project actually
+            calls the type (e.g. 'Epic'), suitable to surface to the user
+            as their list of options. The 'creation_url' is what
+            create_ewm_task / create_defect-style POSTs need.
+        """
+        try:
+            resp = self.session.get(
+                service_provider_url,
+                headers={
+                    'Accept': 'application/rdf+xml',
+                    'OSLC-Core-Version': '2.0',
+                },
+                timeout=self._TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return []
+
+            root = ET.fromstring(resp.content)
+            ns = self._NS_OSLC
+
+            results = []
+            seen_names = set()
+            for cf in root.findall('.//oslc:CreationFactory', ns):
+                title_el = cf.find('dcterms:title', ns)
+                creation_el = cf.find('oslc:creation', ns)
+                if title_el is None or creation_el is None:
+                    continue
+
+                raw_title = (title_el.text or '').strip()
+                creation_url = creation_el.get(f'{{{ns["rdf"]}}}resource', '')
+                if not creation_url or not raw_title:
+                    continue
+
+                # Extract the type name from the factory title.
+                # Common patterns:
+                #   "Location for creation of <Type> change requests"
+                #   "<Type> creation factory"
+                #   just "<Type>"
+                # If neither pattern matches AND the title looks like a
+                # generic factory (no specific type embedded), skip it —
+                # those are catch-alls that confuse the user when we
+                # surface them as type options.
+                import re as _re
+                name = None
+                m = _re.match(
+                    r'^Location for creation of\s+(.+?)\s+change\s+requests?$',
+                    raw_title,
+                    _re.IGNORECASE,
+                )
+                if m:
+                    name = m.group(1).strip()
+                else:
+                    m = _re.match(
+                        r'^(.+?)\s+creation\s+factory$',
+                        raw_title,
+                        _re.IGNORECASE,
+                    )
+                    if m:
+                        name = m.group(1).strip()
+
+                if name is None:
+                    # No recognizable wrapper — accept the title as-is
+                    # only if it looks like a real type (no "creation",
+                    # no "factory", no "change requests"). Otherwise it's
+                    # a generic catch-all factory; skip.
+                    lowered = raw_title.lower()
+                    if any(skip in lowered for skip in
+                           ('creation', 'factory', 'change request')):
+                        continue
+                    name = raw_title
+
+                # Title-case ONLY if the whole name is lower; preserve
+                # mixed-case names like "PI Objective" untouched.
+                if name and name == name.lower():
+                    name = name.title()
+
+                # Dedupe by name (some projects expose the same type via
+                # multiple factories — e.g. one for default, one for a
+                # specific category).
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+
+                shape_el = cf.find('oslc:resourceShape', ns)
+                shape_url = (shape_el.get(f'{{{ns["rdf"]}}}resource', '')
+                             if shape_el is not None else '')
+
+                results.append({
+                    'name': name,
+                    'creation_url': creation_url,
+                    'shape_url': shape_url,
+                })
+
+            results.sort(key=lambda x: x['name'].lower())
+            return results
+        except Exception:
+            return []
+
     def _get_ewm_creation_factories(self, service_provider_url: str) -> Dict[str, str]:
         """Get EWM creation factory URLs from a service provider.
 

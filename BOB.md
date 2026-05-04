@@ -2,7 +2,7 @@
 
 > **DISCLAIMER:** This is a personal passion project. NOT an official IBM product, NOT created or endorsed by the ELM development team. Use at your own risk. IBM, DOORS Next, ELM, EWM, and ETM are trademarks of IBM Corporation.
 
-This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 40 tools + 6 prompts. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
+This MCP server connects you to IBM Engineering Lifecycle Management (ELM) — DNG (requirements), EWM (work items), ETM (test management), GCM (global config), and SCM (code / change-sets / reviews). 44 tools + 7 prompts. All the heavy lifting is done by the MCP tools — you do NOT need to write any Python code.
 
 ## TRIGGER PHRASES — match user intent to the right workflow
 
@@ -18,6 +18,7 @@ Before doing anything, check what the user actually wants. The mapping below cat
 | "do the full lifecycle" / "requirements + tasks + tests" | **Step 3f: FULL LIFECYCLE Path** | merge it with build-project (full-lifecycle stops after Phase 3; build-project continues into code) |
 | "import this PDF" / "read these requirements from a PDF" | **Step 3c: PDF IMPORT** | extract the PDF yourself; use `extract_pdf` |
 | "import these requirements" / "I have requirements already" / "we wrote them in Jira/Notion/Word" / "/import-requirements" / user pastes a chunk of text that's clearly requirements (Jira epic body, bullet list of shall-statements, etc.) | **Step 3j: IMPORT REQUIREMENTS Path** — invoke the `/import-requirements` prompt. Brownfield path: parse pasted content → preview → push to a new DNG module with auto-bind. | re-write the user's requirements in your own words — preserve their text. Don't put acceptance criteria in DNG; hold them for ETM. Don't push without preview + approval. |
+| "import this work item" / "import this Jira epic" / "we have an epic in [PDF]" / "/import-work-item" / user provides a PDF that's a complete work-item export (Jira / Azure DevOps / etc. with reqs + tasks + ACs all in one document) | **Step 3k: IMPORT WORK ITEM Path** — invoke the `/import-work-item` prompt. Multi-artifact brownfield: extract PDF → parse epic + reqs + ACs + child stories → push EWM work item + DNG module + ETM test cases + cross-links in one round. | guess work item types — call `get_ewm_workitem_types` and show the user the actual list. Don't try to match Jira assignees to EWM users — leave unset, mention as info-only. |
 | "show me the requirements in [module]" / "list reqs" / "read [module]" | **Step 3a: READ Path** | dump every req without filter — interview about filtering first |
 | "update yourself" / "are you up to date" / "pull the latest" | call `update_elm_mcp` | manually run git commands |
 | "what can you do?" / "list your tools" / "help" | call `list_capabilities` | enumerate tools from memory |
@@ -849,6 +850,56 @@ This path is invoked by:
 - ❌ Pushing without preview + approval.
 - ❌ Calling `create_module` then `create_requirements` separately. Use `module_name` in `create_requirements` for auto-bind.
 - ❌ Inflating the count by splitting one idea into multiple reqs to look thorough. Be honest with the count.
+
+### Step 3k: IMPORT WORK ITEM Path (brownfield — PDF → multi-artifact ELM graph)
+
+Triggered by `/import-work-item`, by trigger phrases like *"import this Jira epic"*, or when the user provides a PDF that's a complete work-item export (epic + child stories + reqs + ACs all bundled).
+
+This is the multi-artifact extension of Step 3j — instead of one DNG module, you produce: **1 EWM work item + 1 DNG module of reqs + N ETM test cases (from ACs) + M EWM child work items (from linked sub-tasks) + cross-links between all of them.**
+
+#### What you do
+
+1. **Extract the PDF.** Call `extract_pdf` with the user's path. Parse the resulting text into the structured layout the source format produces (Jira's epic export has a recognizable header + Description + Links + Comments shape).
+
+2. **Identify the SIX artifact categories:**
+   - **Main work item** (1) — the epic/story/feature itself. Title, ID, type, status, description.
+   - **Functional requirements** (N) — atomic shall-statements from the "Functional Requirements" section
+   - **Non-functional requirements** (M) — performance, security, retention, etc. Same atomic shape, NFR-tagged
+   - **Acceptance criteria** (K) — test-shaped conditions; HOLD for ETM, do NOT push to DNG
+   - **Linked work items** (J) — children, sub-tasks, "implements" / "relates to" entries
+   - **Skipped** — Business Goal, Risks, Dependencies, Assumptions, DoD (project metadata)
+
+3. **Resolve the EWM type — list-driven, never guess.** Read the type from the PDF (e.g. `Type: Epic`). Call `get_ewm_workitem_types(ewm_project)` to discover what the user's project actually exposes (Capability, Defect, Portfolio Epic, Solution Epic, Task, etc. — varies per project's process configuration). Match:
+   - **Exact match** → use silently, mention as default in preview
+   - **No match** → SHOW THE USER THE ACTUAL LIST and let them pick. Don't guess a vocabulary; show their project's real types
+   - **Ambiguous** → show list with the closest matches highlighted
+
+4. **Run the gap audit.** Five categories — quality / mapping / reference / completeness / decisions. Cap noise: top 5 quality gaps, summarize others. **Critical:** assignee mappings are NOT a gap. Original Jira assignee is preserved in artifact text where it appears naturally; EWM assignee defaults to UNSET — never ask. Mention as informational.
+
+5. **Show comprehensive preview** with three escape hatches: address-each / push-with-defaults / ignore-gaps.
+
+6. **Wait for explicit approval.** Same write-gate pattern as everywhere else.
+
+7. **Push in dependency order:**
+   - EWM main work item first (no inbound links yet)
+   - DNG module + reqs via `create_requirements(module_name=...)` (auto-creates module + binds)
+   - EWM child work items via `create_task` / etc. with `requirement_url=<main work item URL>` if applicable
+   - ETM test cases via `create_test_case` with `requirement_url=<the relevant DNG req URL>`
+   - Back-links to DNG are written automatically (since v0.1.12) — no extra `create_link` calls needed for the standard implements/validates relationships
+
+8. **Post-push report:** every URL as a markdown link, plus every default-choice you made when "push with defaults" was used.
+
+9. **Offer the natural next step:** *"Want me to /build-project from this state? I'd skip Phases 1–4 (artifacts already created), pick up at Phase 5 (your review in ELM), then re-pull current state and write the actual code."*
+
+#### Anti-patterns
+
+- ❌ Guessing what work-item types the project supports instead of calling `get_ewm_workitem_types`
+- ❌ Asking "is this an epic, story, or task?" in the abstract instead of showing the project's actual list
+- ❌ Trying to match the original Jira assignee to an EWM user — leave unset
+- ❌ Pushing acceptance criteria as DNG requirements (they're test-shaped — go to ETM)
+- ❌ Creating a separate `create_module` then `create_requirements` — use `module_name` in `create_requirements` for auto-bind
+- ❌ Forgetting the cross-links — `create_task` / `create_test_case` should pass `requirement_url` so the link is written atomically (and the back-link is automatic per v0.1.12)
+- ❌ Not surfacing default-choices in the post-push report — the user needs to see what was decided for them
 
 ### After Any Path
 Ask: "Want to do anything else? I can read from another module, generate more requirements (single-tier or tiered), create tasks or test cases, or switch projects."
